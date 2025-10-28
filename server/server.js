@@ -3,50 +3,17 @@ const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "./.env") });
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 const db = require("./db");
 const multer = require("multer");
 const fs = require("fs");
 const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = "0.0.0.0";
-const JWT_SECRET = process.env.JWT_SECRET;
-
-if (!JWT_SECRET) {
-  console.error("FATAL ERROR: JWT_SECRET is not defined in .env.");
-  process.exit(1);
-}
 
 // Enable CORS
 app.use(cors());
 
-// JWT Authentication Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token)
-    return res.status(401).json({ message: "Authentication token required." });
-
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err)
-      return res.status(403).json({ message: "Invalid or expired token." });
-    console.log("✅ Authenticated User:", decoded);
-    req.user = decoded;
-    next();
-  });
-};
-
-// Role-based Authorization Middleware
-const authorizeRole = (role) => {
-  return (req, res, next) => {
-    if (req.user.role !== role) {
-      return res
-        .status(403)
-        .json({ message: "Forbidden: Insufficient privileges." });
-    }
-    next();
-  };
-};
+// Auth disabled: no JWT middleware; endpoints are public.
 
 // Ensure uploads directory exists
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -71,13 +38,11 @@ app.use("/uploads", express.static(UPLOADS_DIR));
 
 app.use(express.json());
 
-// LOGIN ROUTE
+// LOGIN ROUTE (no JWT)
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
   try {
-    const [users] = await db.query("SELECT * FROM employees WHERE email = ?", [
-      email,
-    ]);
+    const [users] = await db.query("SELECT * FROM employees WHERE email = ?", [email]);
     if (!users.length)
       return res.status(401).json({ message: "Invalid credentials." });
 
@@ -86,12 +51,8 @@ app.post("/api/auth/login", async (req, res) => {
     if (!isMatch)
       return res.status(401).json({ message: "Invalid credentials." });
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
-      expiresIn: "24h",
-    });
     delete user.password;
-
-    res.json({ token, user });
+    res.json({ user });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error." });
@@ -137,10 +98,50 @@ app.get('/api/employees', async (req, res) => {
   }
 });
 
-// Get logged-in employee's stats
-app.get("/employee/me", authenticateToken, async (req, res) => {
+// Public: create a new employee (no auth)
+app.post('/api/employees', async (req, res) => {
+  const { name, email, password, role = 'employee', position, teams } = req.body;
+
   try {
-    const userId = req.user.id; // from your auth middleware
+    // Email duplication check
+    const [existing] = await db.query('SELECT id FROM employees WHERE email = ?', [email]);
+    if (existing.length > 0) {
+      return res.status(409).json({ message: 'Error: An employee with this email already exists.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const teamString = Array.isArray(teams) ? teams.join(',') : (typeof teams === 'string' ? teams : null);
+
+    const [result] = await db.query(
+      'INSERT INTO employees (name, email, password, role, position, team) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, email, hashedPassword, role, position, teamString]
+    );
+
+    res.status(201).json({
+      id: result.insertId,
+      name,
+      email,
+      role,
+      position,
+      teams: Array.isArray(teams) ? teams : (typeof teams === 'string' && teams ? teams.split(',').map(t=>t.trim()).filter(Boolean) : []),
+    });
+  } catch (error) {
+    console.error('Error creating employee:', error);
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({ message: "Database table 'employees' not found." });
+    }
+    if (error.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(500).json({ message: "A field like 'position' or 'team' is missing from your 'employees' table." });
+    }
+    res.status(500).json({ message: 'Error creating employee.' });
+  }
+});
+
+// Get employee stats (public) via query ?id=
+app.get("/employee/me", async (req, res) => {
+  try {
+    const userId = parseInt(req.query.id, 10);
+    if (!userId) return res.json([]);
     const [stats] = await db.query(
       "SELECT * FROM employee_stats WHERE employee_id = ?",
       [userId]
@@ -156,7 +157,6 @@ app.get("/employee/me", authenticateToken, async (req, res) => {
 // GET TODAY'S REPORT FOR EMPLOYEE
 app.get(
   "/api/reports/employee/:id/today",
-  authenticateToken,
   async (req, res) => {
     const { id } = req.params;
     const today = new Date().toISOString().split("T")[0];
@@ -176,13 +176,13 @@ app.get(
   }
 );
 
-// CREATE REPORT
-app.post("/api/reports", authenticateToken, async (req, res) => {
-  const { reportText, status } = req.body;
-  const userId = req.user.id;
+// CREATE REPORT (public) — expects employee_id in body
+app.post("/api/reports", async (req, res) => {
+  const { reportText, status, employee_id } = req.body;
+  const userId = employee_id;
 
-  if (!reportText || !status)
-    return res.status(400).json({ message: "Missing required fields." });
+  if (!reportText || !status || !userId)
+    return res.status(200).json({ message: "Skipped: insufficient data." });
 
   try {
     const sql =
@@ -198,11 +198,9 @@ app.post("/api/reports", authenticateToken, async (req, res) => {
   }
 });
 
-// GET ALL REPORTS (Admin)
+// GET ALL REPORTS (public)
 app.get(
   "/api/reports",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const [rows] = await db.query(
@@ -216,10 +214,11 @@ app.get(
   }
 );
 
-// GET EMPLOYEE'S OWN REPORTS WITH FILTERING
-app.get("/api/reports/employee/me", authenticateToken, async (req, res) => {
-  const userId = req.user.id;
+// GET EMPLOYEE'S OWN REPORTS WITH FILTERING (public) expects ?id=
+app.get("/api/reports/employee/me", async (req, res) => {
+  const userId = parseInt(req.query.id, 10);
   const { fromDate, toDate, status } = req.query;
+  if (!userId) return res.json([]);
 
   try {
     let query = "SELECT * FROM reports WHERE employee_id = ?";
@@ -254,13 +253,9 @@ app.get("/api/reports/employee/me", authenticateToken, async (req, res) => {
 // --- [START] NEW ROUTES FOR EMPLOYEE DASHBOARD ---
 
 // GET EMPLOYEE PERSONAL STATS (LEAVE, ETC.)
-app.get("/api/stats/employee/:id", authenticateToken, async (req, res) => {
+app.get("/api/stats/employee/:id", async (req, res) => {
   const userId = req.params.id;
   
-  // Verify that the user is requesting their own stats or is an admin
-  if (req.user.id !== parseInt(userId) && req.user.role !== 'admin') {
-    return res.status(403).json({ message: "Forbidden: Can only access your own stats." });
-  }
 
   try {
     // First check if the annual leave columns exist
@@ -317,29 +312,20 @@ app.get("/api/stats/employee/:id", authenticateToken, async (req, res) => {
 // GET EMPLOYEE PERSONAL REPORT STATS
 app.get(
   "/api/stats/employee/:id/reports",
-  authenticateToken,
   async (req, res) => {
     const userId = req.params.id;
-    
-    // Verify that the user is requesting their own stats or is an admin
-    if (req.user.id !== parseInt(userId) && req.user.role !== 'admin') {
-      return res.status(403).json({ message: "Forbidden: Can only access your own stats." });
-    }
-    
+
     try {
-      // Get counts for all compliance statuses for the user
       const [rows] = await db.query(
         "SELECT compliance_status, COUNT(*) as count FROM reports WHERE employee_id = ? GROUP BY compliance_status",
         [userId]
       );
 
-      // Initialize stats object as expected by the frontend
       const stats = {
         total_reports: 0,
         on_time_count: 0,
         late_count: 0,
-        ful_count: 0, // Frontend uses this key for "Half Unpaid Leave (HUL)"
-        // Note: Frontend hardcodes "Full Unpaid Leave (FUL)" to 0, so we don't need a key for it.
+        ful_count: 0,
       };
 
       let total = 0;
@@ -352,16 +338,15 @@ app.get(
           case "Late":
             stats.late_count = row.count;
             break;
-          case "HUL": // Assuming 'HUL' is the status in the DB
-            // The frontend component maps the 'ful_count' key to the "Half Unpaid Leave (HUL)" card.
+          case "HUL":
             stats.ful_count = row.count;
             break;
-          // Any other statuses (like 'FUL') will be counted in total_reports but not in a specific card.
+          default:
+            break;
         }
       });
 
       stats.total_reports = total;
-
       res.json(stats);
     } catch (err) {
       console.error("Error fetching employee report stats:", err);
@@ -370,12 +355,25 @@ app.get(
   }
 );
 
-// --- [END] NEW ROUTES FOR EMPLOYEE DASHBOARD ---
+// Employee's own leaves (public): supports query ?id=
+app.get('/api/leaves/employee/me', async (req, res) => {
+  try {
+    const userId = parseInt(req.query.id, 10);
+    if (!userId) return res.json([]);
+    const query = `SELECT l.id, l.employee_id, l.leave_type, l.start_date, l.end_date, l.reason, l.status, l.created_at, l.medical_certificate_url, e.name as employee_name FROM leaves AS l LEFT JOIN employees AS e ON l.employee_id = e.id WHERE l.employee_id = ? ORDER BY l.created_at DESC`;
+    const [leaves] = await db.query(query, [userId]);
+    res.json(leaves);
+  } catch (error) {
+    console.error('Error fetching employee leaves:', error);
+    res.status(500).json({ message: 'Server error fetching employee leaves.' });
+  }
+});
 
-// CREATE LEAVE REQUEST
-app.post("/api/leaves", authenticateToken, upload, async (req, res) => {
-  const employee_id = req.user.id;
+// CREATE LEAVE REQUEST (public)
+app.post("/api/leaves", upload, async (req, res) => {
+  const employee_id = req.body.employee_id;
   const { leave_type, start_date, end_date, reason } = req.body;
+  if (!employee_id) return res.status(200).json({ message: "Skipped: missing employee_id." });
 
   const VALID_LEAVE_TYPES = ["AL", "ML", "UPL", "HML", "HEL"];
   if (!VALID_LEAVE_TYPES.includes(leave_type))
@@ -464,11 +462,9 @@ app.post("/api/leaves", authenticateToken, upload, async (req, res) => {
   }
 });
 
-// FETCH LEAVES (Admin)
+// FETCH LEAVES (All)
 app.get(
   "/api/leaves",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const [rows] = await db.query(
@@ -482,11 +478,34 @@ app.get(
   }
 );
 
-// UPDATE LEAVE STATUS (Admin)
+// Single leave by ID (public)
+app.get(
+  "/api/leaves/:id",
+  async (req, res) => {
+    const { id } = req.params;
+    try {
+      const query = `
+      SELECT l.id, l.employee_id, l.leave_type, l.start_date, l.end_date, l.reason,
+             l.status, l.created_at, l.medical_certificate_url, e.name as employee_name
+      FROM leaves AS l
+      LEFT JOIN employees AS e ON l.employee_id = e.id
+      WHERE l.id = ?
+    `;
+      const [leave] = await db.query(query, [id]);
+      if (leave.length === 0) {
+        return res.status(404).json({ message: "Leave not found." });
+      }
+      res.json(leave[0]);
+    } catch (error) {
+      console.error(`Error fetching leave ID ${id}:`, error);
+      res.status(500).json({ message: "Server error fetching leave details." });
+    }
+  }
+);
+
+// UPDATE LEAVE STATUS
 app.put(
   "/api/leaves/:id",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     const { id } = req.params;
     const { status, leave_type } = req.body;

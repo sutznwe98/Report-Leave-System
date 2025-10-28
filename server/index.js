@@ -552,8 +552,6 @@ app.post("/api/reports", authenticateToken, async (req, res) => {
 // Admin-only route to fetch all reports
 app.get(
   "/api/reports",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const query =
@@ -763,8 +761,6 @@ app.post("/api/leaves", authenticateToken, upload, async (req, res) => {
 // Fetch all leaves (admin view)
 app.get(
   "/api/leaves",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const query =
