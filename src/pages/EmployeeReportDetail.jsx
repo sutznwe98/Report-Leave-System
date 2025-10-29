@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { ArrowLeft } from 'lucide-react';
 
 const API_URL = 'http://localhost:5000/api';
 
@@ -12,11 +14,13 @@ const EmployeeReportDetail = ({ reportId: propReportId }) => {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { user, token } = useAuth();
 
   useEffect(() => {
     const fetchReport = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) {
+      const authToken = token || localStorage.getItem('token');
+      const userId = user?.id || JSON.parse(localStorage.getItem('user') || '{}')?.id;
+      if (!authToken || !userId) {
         setError('Authentication required.');
         setLoading(false);
         return;
@@ -28,8 +32,10 @@ const EmployeeReportDetail = ({ reportId: propReportId }) => {
       try {
         // Fetch all my reports and find the one by ID (no single-report endpoint available)
         const res = await axios.get(`${API_URL}/reports/employee/me`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${authToken}` },
+          params: { id: typeof userId === 'string' ? parseInt(userId, 10) : userId },
         });
+
         const reports = Array.isArray(res.data) ? res.data : [];
         const found = reports.find((r) => String(r.id) === String(reportId));
         if (!found) {
@@ -92,9 +98,10 @@ const EmployeeReportDetail = ({ reportId: propReportId }) => {
           <h2 className="text-2xl font-bold text-gray-800">Report Details</h2>
           <button
             onClick={() => navigate('/employee/report-list')}
-            className="px-3 py-2 bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200 text-sm"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-300 active:bg-indigo-800 transition text-sm sm:text-base"
           >
-            ← Back
+            <ArrowLeft className="w-4 h-4" />
+            Back to My Reports
           </button>
         </div>
 
@@ -112,7 +119,7 @@ const EmployeeReportDetail = ({ reportId: propReportId }) => {
                 status === 'OnTime' ? 'bg-green-100 text-green-700' :
                 status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
                 status === 'HUL' ? 'bg-orange-100 text-orange-700' :
-                status === 'FUL' ? 'bg-red-100 text-red-700' :
+                status === 'UPL' ? 'bg-red-100 text-red-700' :
                 'bg-gray-100 text-gray-700';
               return (
                 <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${cls}`}>

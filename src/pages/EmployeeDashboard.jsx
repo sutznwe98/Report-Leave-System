@@ -73,6 +73,7 @@ const EmployeeDashboard = () => {
           }),
           axios.get(`${API_URL}/leaves/employee/me`, {
             headers: { Authorization: `Bearer ${token}` },
+            params: { id: userId }
           }),
           axios
             .get(`${API_URL}/reports/employee/${userId}/today`, {
@@ -89,9 +90,30 @@ const EmployeeDashboard = () => {
         setEmployeeStats(employeeRes.data);
         setReportStats(reportRes.data);
         setLeaves(Array.isArray(leavesRes.data) ? leavesRes.data : []);
-        setMorningDue(!todayRes || todayRes.status === 404 || !todayRes.data);
+
         const reports = Array.isArray(myReportsRes.data) ? myReportsRes.data : [];
-        const missed = reports.filter((r) => (r.compliance_status || '').toUpperCase() === 'FUL').length;
+
+        const today = new Date();
+        const sameLocalDate = (dt) => {
+          if (!dt) return false;
+          const d = new Date(dt);
+          if (isNaN(d.getTime())) return false;
+          return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+        };
+
+        // Determine if today report exists from today endpoint
+        const hasTodayFromEndpoint = Boolean(
+          todayRes && todayRes.status === 200 && todayRes.data && (
+            (Array.isArray(todayRes.data) ? todayRes.data.length > 0 : true)
+          )
+        );
+
+        // Fallback: scan full list
+        const hasTodayFromList = reports.some(r => sameLocalDate(r.report_date) || sameLocalDate(r.submission_time) || sameLocalDate(r.created_at));
+
+        setMorningDue(!(hasTodayFromEndpoint || hasTodayFromList));
+
+        const missed = reports.filter((r) => (r.compliance_status || '').toUpperCase() === 'UPL').length;
         setMissedReports(missed);
         setLoading(false);
       } catch (err) {
@@ -215,7 +237,8 @@ const EmployeeDashboard = () => {
               <tr className="text-left text-gray-500 text-sm">
                 <th className="px-5 py-3">From Date</th>
                 <th className="px-5 py-3">To Date</th>
-                <th className="px-5 py-3">Days</th>
+                <th className="px-5 py-3">Leave Days Count</th>
+                <th className="px-5 py-3">Reason</th>
                 <th className="px-5 py-3">Type</th>
                 <th className="px-5 py-3">Status</th>
               </tr>
@@ -235,6 +258,7 @@ const EmployeeDashboard = () => {
                     <td className="px-5 py-3">{start ? formatYMD(start) : '—'}</td>
                     <td className="px-5 py-3">{end ? formatYMD(end) : '—'}</td>
                     <td className="px-5 py-3">{days}</td>
+                    <td className="px-5 py-3">{l.reason || '—'}</td>
                     <td className="px-5 py-3">
                       <span className="px-2 py-1 text-xs rounded-full border text-gray-700 bg-gray-50">{l.leave_type || '—'}</span>
                     </td>

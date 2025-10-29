@@ -24,9 +24,46 @@ const MorningReports = () => {
         try {
             const token = localStorage.getItem('token');
             const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-            const res = await axios.get(`${API_URL}/reports`, { headers });
-            setAllReports(res.data);
-            setReports(res.data); // show all initially
+            const [reportsRes, employeesRes] = await Promise.all([
+                axios.get(`${API_URL}/reports`, { headers }),
+                axios.get(`${API_URL}/employees`, { headers })
+            ]);
+
+            const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
+            const employees = employeesRaw.map(emp => ({
+                ...emp,
+                teams: Array.isArray(emp.teams)
+                    ? emp.teams
+                    : (typeof emp.team === 'string'
+                        ? emp.team.split(',').map(t => t.trim()).filter(Boolean)
+                        : []),
+            }));
+
+            const byId = new Map(employees.map(e => [e.id, e]));
+            const byEmail = new Map(employees.map(e => [e.email, e]));
+            const byName = new Map(employees.map(e => [e.name, e]));
+
+            const enrich = (r) => {
+                const possibleIds = [r.employee_id, r.employeeId, r.user_id, r.userId];
+                const possibleEmails = [r.employee_email, r.email, r.user_email];
+                const possibleNames = [r.employee_name, r.name, r.user_name];
+
+                const foundId = possibleIds.find(id => id && byId.get(id));
+                const foundEmail = possibleEmails.find(em => em && byEmail.get(em));
+                const foundName = possibleNames.find(nm => nm && byName.get(nm));
+                const emp = (foundId && byId.get(foundId)) || (foundEmail && byEmail.get(foundEmail)) || (foundName && byName.get(foundName));
+                if (!emp) return r;
+                return {
+                    ...r,
+                    employee_name: r.employee_name || emp.name || 'N/A',
+                    employee_email: r.employee_email || emp.email,
+                    teams: Array.isArray(r.teams) && r.teams.length ? r.teams : emp.teams || [],
+                };
+            };
+
+            const reports = Array.isArray(reportsRes.data) ? reportsRes.data.map(enrich) : [];
+            setAllReports(reports);
+            setReports(reports); // show all initially
         } catch (err) {
             console.error(err);
             setError('Failed to fetch reports.');
@@ -78,7 +115,7 @@ const MorningReports = () => {
             case 'OnTime': return <span className="px-2 py-1 text-xs font-semibold text-green-700 bg-green-100 rounded-full">On Time</span>;
             case 'Late': return <span className="px-2 py-1 text-xs font-semibold text-yellow-700 bg-yellow-100 rounded-full">Late</span>;
             case 'HUL': return <span className="px-2 py-1 text-xs font-semibold text-orange-700 bg-orange-100 rounded-full">Half Unpaid Leave</span>;
-            case 'FUL': return <span className="px-2 py-1 text-xs font-semibold text-red-700 bg-red-100 rounded-full">Full Unpaid Leave</span>;
+            case 'UPL': return <span className="px-2 py-1 text-xs font-semibold text-red-700 bg-red-100 rounded-full">Full Unpaid Leave</span>;
             default: return null;
         }
     };
@@ -157,7 +194,7 @@ const MorningReports = () => {
                             <option value="OnTime">On Time</option>
                             <option value="Late">Late</option>
                             <option value="HUL">Half Unpaid Leave</option>
-                            <option value="FUL">Full Unpaid Leave</option>
+                            <option value="UPL">Full Unpaid Leave</option>
                         </select>
                     </div>
 
@@ -197,6 +234,7 @@ const MorningReports = () => {
                             <tr>
                                 <th className="p-4 text-left">Date</th>
                                 <th className="p-4 text-left">Name</th>
+                                <th className="p-4 text-left">Project</th>
                                 <th className="p-4 text-left">Report</th>
                                 <th className="p-4 text-left">Time</th>
                                 <th className="p-4 text-left">Status</th>
@@ -207,6 +245,7 @@ const MorningReports = () => {
                                 <tr key={report.id} className="border-b hover:bg-gray-50 transition">
                                     <td className="p-4">{formatYMD(report.submission_time || report.report_date || report.created_at)}</td>
                                     <td className="p-4">{report.employee_name}</td>
+                                    <td className="p-4">{Array.isArray(report.teams) ? (report.teams.length ? report.teams.join(', ') : 'N/A') : (typeof report.team === 'string' ? report.team : 'N/A')}</td>
                                     <td className="p-4 max-w-sm whitespace-normal">{summarizeReport(report.report_text)}</td>
                                     <td className="p-4">{formatTime(report.submission_time || report.created_at || report.report_date)}</td>
                                     <td className="p-4">{getStatusBadge(report.compliance_status)}</td>
@@ -228,6 +267,8 @@ const MorningReports = () => {
                             </div>
                             {/* Name */}
                             <p className="text-sm font-semibold text-gray-800 mb-1">{report.employee_name}</p>
+                            {/* Teams */}
+                            <p className="text-xs text-gray-600 mb-2">{Array.isArray(report.teams) ? (report.teams.length ? report.teams.join(', ') : 'N/A') : (typeof report.team === 'string' ? report.team : 'N/A')}</p>
                             {/* Report */}
                             <p className="text-gray-700 text-sm mb-2">{summarizeReport(report.report_text)}</p>
                             {/* Time + Status */}

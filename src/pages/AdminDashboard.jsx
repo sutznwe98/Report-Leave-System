@@ -49,13 +49,41 @@ const AdminDashboard = () => {
 
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [leavesRes, reportsRes] = await Promise.all([
+        const [leavesRes, reportsRes, employeesRes] = await Promise.all([
           axios.get(`${API_URL}/leaves`, { headers }),
           axios.get(`${API_URL}/reports`, { headers }),
+          axios.get(`${API_URL}/employees`, { headers }),
         ]);
 
-        setLeaves(leavesRes.data);
-        setReports(reportsRes.data);
+        const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
+        const employees = employeesRaw.map((emp) => ({
+          ...emp,
+          teams: Array.isArray(emp.teams)
+            ? emp.teams
+            : (typeof emp.team === 'string'
+                ? emp.team.split(',').map((t) => t.trim()).filter(Boolean)
+                : []),
+        }));
+
+        const byId = new Map(employees.map((e) => [e.id, e]));
+        const byEmail = new Map(employees.map((e) => [e.email, e]));
+        const byName = new Map(employees.map((e) => [e.name, e]));
+
+        const enrichWithEmployee = (row) => {
+          const emp = byId.get(row.employee_id) || byEmail.get(row.employee_email) || byName.get(row.employee_name);
+          if (!emp) return row;
+          return {
+            ...row,
+            employee_name: row.employee_name || emp.name || 'N/A',
+            teams: Array.isArray(row.teams) && row.teams.length ? row.teams : emp.teams || [],
+          };
+        };
+
+        const leavesData = Array.isArray(leavesRes.data) ? leavesRes.data : [];
+        const reportsData = Array.isArray(reportsRes.data) ? reportsRes.data : [];
+
+        setLeaves(leavesData.map(enrichWithEmployee));
+        setReports(reportsData.map(enrichWithEmployee));
       } catch (err) {
         console.error(err);
         setError(
@@ -130,7 +158,7 @@ const AdminDashboard = () => {
         return 'bg-yellow-100 text-yellow-800 border-yellow-300';
       case 'HUL':
         return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'FUL':
+      case 'UPL':
         return 'bg-red-100 text-red-800 border-red-300';
       case 'Late':
         return 'bg-orange-100 text-orange-800 border-orange-300';
@@ -152,6 +180,25 @@ const AdminDashboard = () => {
     } catch {
       return text;
     }
+  };
+
+  const daysInclusive = (startDate, endDate) => {
+    if (!startDate || !endDate) return 0;
+    const s = new Date(startDate);
+    const e = new Date(endDate);
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) return 0;
+    return Math.ceil((e - s) / (1000 * 60 * 60 * 24)) + 1;
+  };
+
+  const renderTeams = (obj) => {
+    const arr = Array.isArray(obj?.teams)
+      ? obj.teams
+      : Array.isArray(obj?.employee_teams)
+      ? obj.employee_teams
+      : (typeof obj?.team === 'string'
+        ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
+        : []);
+    return arr.length ? arr.join(', ') : 'N/A';
   };
 
   if (loading) {
@@ -210,7 +257,10 @@ const AdminDashboard = () => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Employee Name
+                        Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                        Project
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Reason
@@ -220,6 +270,9 @@ const AdminDashboard = () => {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         End Date
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                        Leave Days Count
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Leave Type
@@ -239,6 +292,9 @@ const AdminDashboard = () => {
                           {l.employee_name || "N/A"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {renderTeams(l)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {l.reason || "N/A"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
@@ -246,6 +302,9 @@ const AdminDashboard = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {extractDate(l.end_date) || "N/A"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {daysInclusive(l.start_date, l.end_date)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {l.leave_type || "N/A"}
@@ -306,7 +365,10 @@ const AdminDashboard = () => {
                         Report Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Employee Name
+                        Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                        Project
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Report
@@ -327,6 +389,9 @@ const AdminDashboard = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {r.employee_name || "N/A"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {renderTeams(r)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {summarizeReport(r.report_text)}

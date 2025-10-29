@@ -39,6 +39,27 @@ const formatDate = (dateString) => {
 };
 
 const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
+  const formatTeams = (obj) => {
+    const arr = Array.isArray(obj?.teams)
+      ? obj.teams
+      : Array.isArray(obj?.employee_teams)
+      ? obj.employee_teams
+      : Array.isArray(obj?.projects)
+      ? obj.projects
+      : Array.isArray(obj?.employee_projects)
+      ? obj.employee_projects
+      : (typeof obj?.team === 'string'
+          ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
+          : (typeof obj?.projects === 'string'
+              ? obj.projects.split(',').map(t => t.trim()).filter(Boolean)
+              : (typeof obj?.project === 'string'
+                  ? obj.project.split(',').map(t => t.trim()).filter(Boolean)
+                  : (typeof obj?.project_name === 'string'
+                      ? obj.project_name.split(',').map(t => t.trim()).filter(Boolean)
+                      : []))));
+    return arr.length ? arr.join(', ') : 'N/A';
+  };
+
   const [leave, setLeave] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -49,6 +70,7 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
   // Status and type are managed locally for editing/action
   const [newStatus, setNewStatus] = useState("");
   const [newLeaveType, setNewLeaveType] = useState(""); // Used for the dropdown
+  const [imgError, setImgError] = useState(false);
 
   // Placeholder for user identification (simulating admin context)
   const userId = "LOCAL_ADMIN_ID_12345";
@@ -87,9 +109,90 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
         });
         const leaveData = response.data;
 
-        setLeave(leaveData);
-        setNewStatus(leaveData.status);
-        setNewLeaveType(leaveData.leave_type);
+        let enriched = { ...leaveData };
+
+        try {
+          // Fetch full employees list to allow robust matching
+          const empListRes = await axios.get(`${API_URL}/employees`, { headers });
+          const employeesRaw = Array.isArray(empListRes.data) ? empListRes.data : [];
+
+          // Normalize each employee's teams (support various fields)
+          const toTeams = (obj) => {
+            if (Array.isArray(obj?.teams)) return obj.teams;
+            if (Array.isArray(obj?.employee_teams)) return obj.employee_teams;
+            if (Array.isArray(obj?.projects)) return obj.projects;
+            if (Array.isArray(obj?.employee_projects)) return obj.employee_projects;
+            if (typeof obj?.team === 'string') return obj.team.split(',').map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.projects === 'string') return obj.projects.split(',').map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.project === 'string') return obj.project.split(',').map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.project_name === 'string') return obj.project_name.split(',').map(t => t.trim()).filter(Boolean);
+            return [];
+          };
+
+          const employees = employeesRaw.map(emp => ({
+            ...emp,
+            teams: toTeams(emp),
+          }));
+
+          // Build lookup maps
+          const byId = new Map(employees.map(e => [e.id, e]));
+          const byEmail = new Map(employees.map(e => [e.email, e]));
+          const byName = new Map(employees.map(e => [e.name, e]));
+
+          // Collect possible keys from leave and match with case/trim insensitivity
+          const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase());
+
+          const possibleIds = [enriched.employee_id, enriched.employeeId, enriched.user_id, enriched.userId];
+          const possibleEmails = [enriched.employee_email, enriched.email, enriched.user_email];
+          const possibleNames = [enriched.employee_name, enriched.name, enriched.user_name, enriched.employee];
+
+          const foundId = possibleIds.find((id) => id && byId.get(id));
+
+          let foundEmailKey = null;
+          if (!foundId) {
+            const emailSet = new Map(Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v]));
+            for (const em of possibleEmails) {
+              const n = norm(em);
+              if (n && emailSet.has(n)) { foundEmailKey = n; break; }
+            }
+          }
+
+          let foundNameKey = null;
+          if (!foundId && !foundEmailKey) {
+            const nameSet = new Map(Array.from(byName.entries()).map(([k, v]) => [norm(k), v]));
+            for (const nm of possibleNames) {
+              const n = norm(nm);
+              if (n && nameSet.has(n)) { foundNameKey = n; break; }
+            }
+          }
+
+          const emp = (foundId && byId.get(foundId)) || (foundEmailKey && Array.from(byEmail.entries()).map(([k,v])=>[norm(k),v]).find(([k])=>k===foundEmailKey)?.[1]) || (foundNameKey && Array.from(byName.entries()).map(([k,v])=>[norm(k),v]).find(([k])=>k===foundNameKey)?.[1]);
+
+          if (emp) {
+            if (!enriched.employee_name) enriched.employee_name = emp.name || enriched.employee_name;
+            const currentTeams = Array.isArray(enriched.teams) ? enriched.teams : (
+              Array.isArray(enriched.employee_teams) ? enriched.employee_teams : null
+            );
+            const currentTeamString = (typeof enriched.team === 'string' && enriched.team.trim()) || (typeof enriched.projects === 'string' && enriched.projects.trim());
+            if (!(currentTeams && currentTeams.length) && !currentTeamString) {
+              enriched.teams = emp.teams || [];
+            }
+          }
+        } catch (_) {
+          // best-effort enrichment; ignore errors
+        }
+
+        // Ensure teams value is consistently an array for rendering
+        if ((!Array.isArray(enriched.teams) || !enriched.teams.length)) {
+          const candidates = formatTeams(enriched);
+          if (candidates && candidates !== 'N/A') {
+            enriched.teams = candidates.split(',').map(s => s.trim()).filter(Boolean);
+          }
+        }
+
+        setLeave(enriched);
+        setNewStatus(enriched.status);
+        setNewLeaveType(enriched.leave_type);
         setError(null);
       } catch (err) {
         console.error("Error fetching leave details:", err);
@@ -320,6 +423,12 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
               />
               <DetailRow
                 icon={Briefcase}
+                label="Project"
+                value={formatTeams(leave)}
+                isBold={true}
+              />
+              <DetailRow
+                icon={Briefcase}
                 label="Leave Type"
                 value={leave.leave_type}
                 isBold={true}
@@ -362,26 +471,35 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
               {leave.reason || "No reason provided."}
             </p>
 
-            {leave.medical_certificate_url && (
-              <>
-                <h3 className="text-xl font-semibold text-gray-800 mt-8 mb-4 border-b pb-1">
-                  Supporting Document
-                </h3>
-                <a
-                  href={leave.medical_certificate_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-purple-600 hover:text-purple-800 underline flex items-center"
-                >
-                  <FileText className="w-5 h-5 mr-2" />
-                  View Medical Certificate
-                </a>
-              </>
-            )}
           </div>
 
           {/* Action/History Column */}
           <div className="lg:col-span-1 p-6 sm:p-8 bg-gray-50">
+            {leave.medical_certificate_url && (
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">Image</h3>
+                {(() => {
+                  const raw = leave.medical_certificate_url || '';
+                  const url = raw.replace('0.0.0.0', 'localhost');
+                  const isPdf = /\.pdf(\?|$)/i.test(url);
+                  if (isPdf) {
+                    return (
+                      <div className="border rounded-lg overflow-hidden bg-white">
+                        <iframe src={url} title="Medical Certificate PDF" className="w-full h-80" />
+                      </div>
+                    );
+                  }
+                  return (
+                    <img
+                      src={url}
+                      alt="Medical Certificate"
+                      className="w-full rounded-lg border shadow"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  );
+                })()}
+              </div>
+            )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
               Actions
             </h2>

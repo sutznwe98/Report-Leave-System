@@ -1,15 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 
 const API_URL = 'http://localhost:5000/api';
-
-const useAuth = () => ({
-  user: {
-    id: 'mock-user-123',
-    token: localStorage.getItem('token'),
-    name: 'Mock User'
-  }
-});
 
 const Icons = {
   UploadCloudIcon: (props) => (
@@ -98,7 +91,8 @@ const RequestLeave = () => {
 
     const formData = new FormData();
     Object.entries(leaveData).forEach(([key, value]) => formData.append(key, value));
-    formData.append('employee_id', user.id);
+    const employeeIdNumeric = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id;
+    formData.append('employee_id', employeeIdNumeric);
 
     if (leaveData.leave_type === 'ML' && medicalCert) {
       formData.append('medical_certificate', medicalCert);

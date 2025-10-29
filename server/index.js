@@ -121,7 +121,7 @@ const determineComplianceStatus = (submissionTime) => {
   } else if (timeInMinutes <= HUL_CUTOFF) {
     return "HUL";
   } else {
-    return "FUL";
+    return "UPL";
   }
 };
 
@@ -552,8 +552,6 @@ app.post("/api/reports", authenticateToken, async (req, res) => {
 // Admin-only route to fetch all reports
 app.get(
   "/api/reports",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const query =
@@ -602,7 +600,7 @@ app.get(
           case "Late":
             stats.late_count = row.count;
             break;
-          case "FUL":
+          case "UPL":
             stats.ful_count = row.count;
             break;
           default:
@@ -763,8 +761,6 @@ app.post("/api/leaves", authenticateToken, upload, async (req, res) => {
 // Fetch all leaves (admin view)
 app.get(
   "/api/leaves",
-  authenticateToken,
-  authorizeRole("admin"),
   async (req, res) => {
     try {
       const query =

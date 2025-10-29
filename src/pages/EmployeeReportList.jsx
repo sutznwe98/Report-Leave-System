@@ -1,21 +1,13 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-// NOTE: useAuth is commented out in this one-file context since it relies on an external file structure
-// import { useAuth } from "../context/AuthContext"; 
+import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
 const API_URL = "http://localhost:5000/api";
 
-// Placeholder hook since the actual context file isn't available
-const useAuth = () => {
-    const token = localStorage.getItem("token");
-    // Simulate user object based on token existence
-    const user = token ? { id: 'simulated_user_id', username: 'EmployeeUser' } : null;
-    return { user };
-}
 
 const EmployeeReportList = () => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
 
   const [reports, setReports] = useState([]);
@@ -26,13 +18,12 @@ const EmployeeReportList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   
-  // Get token outside fetchReports to ensure it's captured
-  const token = localStorage.getItem("token");
+  // token comes from AuthContext; fallback to localStorage for safety
+  const authToken = token || localStorage.getItem("token");
 
   const fetchReports = async () => {
-    // Use the token for auth instead of user?.id check, as user object is simulated here
-    if (!token) {
-        setError("Authentication token missing. Please log in.");
+    if (!authToken || !user?.id) {
+        setError("Authentication required. Please log in.");
         setLoading(false);
         return;
     }
@@ -44,9 +35,9 @@ const EmployeeReportList = () => {
       const response = await axios.get(
         `${API_URL}/reports/employee/me`,
         {
-          headers: { Authorization: `Bearer ${token}` }, // Added headers for authentication
+          headers: { Authorization: `Bearer ${authToken}` },
           params: {
-            // UPDATED PARAMS: Sending fromDate and toDate
+            id: typeof user.id === 'string' ? parseInt(user.id, 10) : user.id,
             fromDate: filterFromDate,
             toDate: filterToDate,
             status: filterStatus,
@@ -65,7 +56,7 @@ const EmployeeReportList = () => {
   useEffect(() => {
     // Added token and filters as dependencies so search runs on initial load AND filter changes
     // Removed direct call to fetchReports from buttons to rely on useEffect for consistency after state change
-    if (token) {
+    if (authToken && user?.id) {
         fetchReports();
     } else {
         setError("Authentication required.");
@@ -73,7 +64,7 @@ const EmployeeReportList = () => {
     }
     // Added filter states to dependency array so search automatically updates on change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterFromDate, filterToDate, filterStatus, token]);
+  }, [filterFromDate, filterToDate, filterStatus, authToken, user?.id]);
 
 
   // UPDATED handleReset: Clear both date filters
@@ -94,7 +85,7 @@ const EmployeeReportList = () => {
         return "bg-blue-100 text-blue-700"; // Review/Pending QA
       case "HUL":
         return "bg-yellow-100 text-yellow-700"; // Holding for Upload
-      case "FUL":
+      case "UPL":
         return "bg-indigo-100 text-indigo-700"; // Final Upload/Completed
       default:
         return "bg-gray-100 text-gray-500";
@@ -190,7 +181,7 @@ const EmployeeReportList = () => {
                 <option value="Late">Late Report</option>
                 <option value="QA">QA Fine</option>
                 <option value="HUL">Half Unpaid Leave</option>
-                <option value="FUL">Full Unpaid Leave</option>
+                <option value="UPL">Full Unpaid Leave</option>
              </select>
           </div>
 

@@ -54,7 +54,7 @@ const SubmitReport = () => {
     } else if (nowMinutes <= hulCutoff) {
       return { status: "HUL", label: "Half Unpaid Leave (HUL)" };
     } else {
-      return { status: "FUL", label: "Full Unpaid Leave (FUL)" };
+      return { status: "UPL", label: "Full Unpaid Leave (UPL)" };
     }
   };
 
@@ -66,7 +66,7 @@ const SubmitReport = () => {
         return "bg-yellow-400"; // Yellow
       case "HUL":
         return "bg-[rgb(245,174,124)]";
-      case "FUL":
+      case "UPL":
         return "bg-[rgb(237,87,87)]";
       default:
         return "bg-gray-400"; // Gray fallback
@@ -203,10 +203,8 @@ const SubmitReport = () => {
 
     const newReport = {
       employee_id: user.id,
-      report_text: composeReportText(),
-      submission_time: mysqlDateTime,
-      report_date: today,
-      compliance_status,
+      reportText: composeReportText(),
+      status: compliance_status,
     };
 
     try {
