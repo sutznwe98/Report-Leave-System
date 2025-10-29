@@ -36,7 +36,11 @@ const ProtectedRoute = ({ allowedRoles }) => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  const userRole = user.role.toLowerCase();
+  const userRole = user && user.role ? String(user.role).toLowerCase() : '';
+
+  if (!userRole) {
+    return <Navigate to="/login" replace />;
+  }
 
   return allowedRoles.includes(userRole) ? (
     <Layout>
@@ -70,7 +74,10 @@ const RootRedirect = () => {
     );
   if (!user) return <Navigate to="/login" replace />;
 
-  const isAdmin = user.role.toLowerCase() === "admin";
+  const userRole = user && user.role ? String(user.role).toLowerCase() : '';
+  if (!userRole) return <Navigate to="/login" replace />;
+
+  const isAdmin = userRole === "admin";
   return (
     <Navigate
       to={isAdmin ? "/admin/dashboard" : "/employee/dashboard"}
@@ -92,7 +99,7 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+      <Route path="/login" element={!(user && user.role) ? <Login /> : <Navigate to="/" />} />
       <Route path="/" element={<RootRedirect />} />
 
       {/* Admin Routes */}
@@ -110,6 +117,7 @@ const AppRoutes = () => {
         <Route path="/employee/submit-report" element={<SubmitReport />} />
         <Route path="/employee/request-leave" element={<RequestLeave />} />
         <Route path="/employee/leave-records" element={<LeaveRecords />} />
+        <Route path="/employee/leaves/:id" element={<LeaveDetailWrapper />} />
         <Route path="/employee/report-list" element={<EmployeeReportList />} />
         <Route path="/employee/report/:id" element={<EmployeeReportDetailWrapper />} />
       </Route>

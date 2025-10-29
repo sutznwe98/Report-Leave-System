@@ -157,7 +157,7 @@ const ConfirmModal = ({
         <h3 className="text-lg font-bold text-gray-900">{title}</h3>
         <p className="mt-2 text-sm text-gray-600">{message}</p>
       </div>
-      <div className="flex justify-end gap-3 px-6 py-4 bg-gray-50 rounded-b-lg">
+      <div className="flex justify-end gap-3 py-3 px-4 bg-gray-50 rounded-b-lg">
         <button
           type="button"
           onClick={onCancel}
@@ -595,15 +595,15 @@ const EmployeeManagement = () => {
       )}
 
       {/* --- Table --- */}
-      <div className="shadow-lg border border-gray-200 rounded-xl overflow-x-auto">
+      <div className="overflow-x-auto bg-white rounded-xl shadow-lg">
         <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
             <tr>
               <th scope="col" className="px-6 py-3 text-center w-12">
               </th>
               <th
                 scope="col"
-                className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+                className="py-3 px-4 text-left"
               >
                 Name
               </th>
@@ -623,7 +623,7 @@ const EmployeeManagement = () => {
                 scope="col"
                 className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
               >
-                Teams
+                Project
               </th>
               <th
                 scope="col"
@@ -633,7 +633,7 @@ const EmployeeManagement = () => {
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
             {employees.length > 0 ? (
               employees.map((emp) => (
                 <tr key={emp.id} className="hover:bg-gray-50 transition-colors">

@@ -15,8 +15,43 @@ const LeaveRequests = () => {
       try {
         const token = adminUser?.token || localStorage.getItem('token');
         const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-        const res = await axios.get(`${API_URL}/leaves`, config);
-        setLeaves(Array.isArray(res.data) ? res.data : []);
+        const [leavesRes, employeesRes] = await Promise.all([
+          axios.get(`${API_URL}/leaves`, config),
+          axios.get(`${API_URL}/employees`, config)
+        ]);
+
+        const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
+        const employees = employeesRaw.map(emp => ({
+          ...emp,
+          teams: Array.isArray(emp.teams)
+            ? emp.teams
+            : (typeof emp.team === 'string'
+                ? emp.team.split(',').map(t => t.trim()).filter(Boolean)
+                : []),
+        }));
+
+        const byId = new Map(employees.map(e => [e.id, e]));
+        const byEmail = new Map(employees.map(e => [e.email, e]));
+        const byName = new Map(employees.map(e => [e.name, e]));
+
+        const enrich = (l) => {
+          const possibleIds = [l.employee_id, l.employeeId, l.user_id, l.userId];
+          const possibleEmails = [l.employee_email, l.email, l.user_email];
+          const possibleNames = [l.employee_name, l.name, l.user_name];
+          const foundId = possibleIds.find(id => id && byId.get(id));
+          const foundEmail = possibleEmails.find(em => em && byEmail.get(em));
+          const foundName = possibleNames.find(nm => nm && byName.get(nm));
+          const emp = (foundId && byId.get(foundId)) || (foundEmail && byEmail.get(foundEmail)) || (foundName && byName.get(foundName));
+          if (!emp) return l;
+          return {
+            ...l,
+            employee_name: l.employee_name || emp.name || 'N/A',
+            teams: Array.isArray(l.teams) && l.teams.length ? l.teams : emp.teams || [],
+          };
+        };
+
+        const leavesData = Array.isArray(leavesRes.data) ? leavesRes.data : [];
+        setLeaves(leavesData.map(enrich));
       } catch (error) {
         console.error('Failed to fetch leaves', error.response?.data || error.message || error);
         setLeaves([]);
@@ -77,6 +112,17 @@ const LeaveRequests = () => {
     }
   };
 
+  const renderTeams = (obj) => {
+    const arr = Array.isArray(obj?.teams)
+      ? obj.teams
+      : Array.isArray(obj?.employee_teams)
+      ? obj.employee_teams
+      : (typeof obj?.team === 'string'
+        ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
+        : []);
+    return arr.length ? arr.join(', ') : 'N/A';
+  };
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Leave Requests</h2>
@@ -85,6 +131,7 @@ const LeaveRequests = () => {
           <thead>
             <tr className="bg-gray-200 text-gray-600 uppercase text-sm">
               <th className="px-5 py-3 border-b-2 border-gray-200 text-left">Employee</th>
+              <th className="px-5 py-3 border-b-2 border-gray-200 text-left">Teams</th>
               <th className="px-5 py-3 border-b-2 border-gray-200 text-left">Type</th>
               <th className="px-5 py-3 border-b-2 border-gray-200 text-left">Dates</th>
               <th className="px-5 py-3 border-b-2 border-gray-200 text-left">Reason</th>
@@ -96,6 +143,7 @@ const LeaveRequests = () => {
             {leaves.map(leave => (
               <tr key={leave.id} className="border-b border-gray-200 hover:bg-gray-100">
                 <td className="px-5 py-4 text-sm">{leave.employee_name || 'N/A'}</td>
+                <td className="px-5 py-4 text-sm">{renderTeams(leave)}</td>
                 <td className="px-5 py-4 text-sm">{getTypeBadge(leave.leave_type)}</td>
                 <td className="px-5 py-4 text-sm">
                   {leave.start_date ? leave.start_date.slice(0, 10) : 'N/A'} to {leave.end_date ? leave.end_date.slice(0, 10) : 'N/A'}
@@ -126,10 +174,9 @@ const LeaveRequests = () => {
                 </td>
               </tr>
             ))}
-
             {leaves.length === 0 && (
               <tr>
-                <td colSpan="6" className="px-5 py-6 text-center text-sm text-gray-500">No leave requests found.</td>
+                <td colSpan="7" className="px-5 py-6 text-center text-sm text-gray-500">No leave requests found.</td>
               </tr>
             )}
           </tbody>

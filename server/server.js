@@ -176,24 +176,37 @@ app.get(
   }
 );
 
-// CREATE REPORT (public) — expects employee_id in body
+// CREATE REPORT (public) — accepts both new and legacy keys and supports extra columns
 app.post("/api/reports", async (req, res) => {
-  const { reportText, status, employee_id } = req.body;
-  const userId = employee_id;
+  // Accept both new and legacy payload shapes
+  const employee_id = req.body.employee_id ?? req.body.user_id ?? req.body.employeeId;
+  const reportText = req.body.reportText ?? req.body.report_text;
+  const status = req.body.status ?? req.body.compliance_status;
 
-  if (!reportText || !status || !userId)
+  if (!employee_id || !reportText || !status) {
     return res.status(200).json({ message: "Skipped: insufficient data." });
+  }
 
   try {
-    const sql =
-      "INSERT INTO reports (employee_id, report_text, compliance_status, created_at) VALUES (?, ?, ?, NOW())";
-    const [result] = await db.query(sql, [userId, reportText, status]);
-
-    res
-      .status(201)
-      .json({ message: "Report submitted", reportId: result.insertId });
+    // First try inserting with submission_time and report_date for schemas that require them
+    const sqlFull =
+      "INSERT INTO reports (employee_id, report_text, compliance_status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())";
+    try {
+      const [result] = await db.query(sqlFull, [employee_id, reportText, status]);
+      return res.status(201).json({ message: "Report submitted", reportId: result.insertId });
+    } catch (errFull) {
+      // If columns don't exist, fall back to minimal insert
+      if (errFull && (errFull.code === 'ER_BAD_FIELD_ERROR' || errFull.code === 'ER_NO_SUCH_FIELD')) {
+        const sqlMinimal =
+          "INSERT INTO reports (employee_id, report_text, compliance_status, created_at) VALUES (?, ?, ?, NOW())";
+        const [result] = await db.query(sqlMinimal, [employee_id, reportText, status]);
+        return res.status(201).json({ message: "Report submitted", reportId: result.insertId });
+      }
+      console.error('Full insert failed:', errFull);
+      return res.status(500).json({ message: "Database error." });
+    }
   } catch (err) {
-    console.error(err);
+    console.error('Report create error:', err);
     res.status(500).json({ message: "Database error." });
   }
 });
@@ -364,11 +377,6 @@ app.get('/api/leaves/employee/me', async (req, res) => {
     const [leaves] = await db.query(query, [userId]);
     res.json(leaves);
   } catch (error) {
-    console.error('Error fetching employee leaves:', error);
-    res.status(500).json({ message: 'Server error fetching employee leaves.' });
-  }
-});
-
 // CREATE LEAVE REQUEST (public)
 app.post("/api/leaves", upload, async (req, res) => {
   const employee_id = req.body.employee_id;
@@ -383,7 +391,8 @@ app.post("/api/leaves", upload, async (req, res) => {
 
   let medical_certificate_url = null;
   if (req.file) {
-    medical_certificate_url = `http://${HOST}:${PORT}/uploads/${req.file.filename}`;
+    const reqHost = req.get && req.get('host') ? req.get('host') : `localhost:${PORT}`;
+    medical_certificate_url = `http://${reqHost}/uploads/${req.file.filename}`;
   }
 
   let effective_leave_type = leave_type;
@@ -439,23 +448,52 @@ app.post("/api/leaves", upload, async (req, res) => {
       }
     }
 
-    const [result] = await db.query(
-      "INSERT INTO leaves (employee_id, leave_type, start_date, end_date, reason, status, medical_certificate_url) VALUES (?, ?, ?, ?, ?, 'Pending', ?)",
-      [
-        employee_id,
-        effective_leave_type,
-        start_date,
-        end_date,
-        reason,
-        medical_certificate_url,
-      ]
-    );
+    try {
+      const [result] = await db.query(
+        "INSERT INTO leaves (employee_id, leave_type, start_date, end_date, reason, status, medical_certificate_url) VALUES (?, ?, ?, ?, ?, 'Pending', ?)",
+        [
+          employee_id,
+          effective_leave_type,
+          start_date,
+          end_date,
+          reason,
+          medical_certificate_url,
+        ]
+      );
 
-    res.status(201).json({
-      message: "Leave request submitted successfully.",
-      id: result.insertId,
-      effective_leave_type,
-    });
+      res.status(201).json({
+        message: "Leave request submitted successfully.",
+        id: result.insertId,
+        effective_leave_type,
+      });
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_FIELD') {
+        try {
+          const [result] = await db.query(
+            "INSERT INTO leaves (employee_id, leave_type, start_date, end_date, reason, status) VALUES (?, ?, ?, ?, ?, 'Pending')",
+            [
+              employee_id,
+              effective_leave_type,
+              start_date,
+              end_date,
+              reason,
+            ]
+          );
+
+          res.status(201).json({
+            message: "Leave request submitted successfully.",
+            id: result.insertId,
+            effective_leave_type,
+          });
+        } catch (err) {
+          console.error("Error creating leave:", err);
+          res.status(500).json({ message: "Failed to create leave. Please try again." });
+        }
+      } else {
+        console.error("Error creating leave:", err);
+        res.status(500).json({ message: "Failed to create leave. Please try again." });
+      }
+    }
   } catch (err) {
     console.error("Leave creation error:", err);
     res.status(500).json({ message: "Server error." });
