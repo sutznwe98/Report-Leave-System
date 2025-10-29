@@ -238,6 +238,7 @@ const EmployeeDashboard = () => {
                 <th className="px-5 py-3">From Date</th>
                 <th className="px-5 py-3">To Date</th>
                 <th className="px-5 py-3">Leave Days Count</th>
+                <th className="px-5 py-3">Reason</th>
                 <th className="px-5 py-3">Type</th>
                 <th className="px-5 py-3">Status</th>
               </tr>
@@ -257,6 +258,7 @@ const EmployeeDashboard = () => {
                     <td className="px-5 py-3">{start ? formatYMD(start) : '—'}</td>
                     <td className="px-5 py-3">{end ? formatYMD(end) : '—'}</td>
                     <td className="px-5 py-3">{days}</td>
+                    <td className="px-5 py-3">{l.reason || '—'}</td>
                     <td className="px-5 py-3">
                       <span className="px-2 py-1 text-xs rounded-full border text-gray-700 bg-gray-50">{l.leave_type || '—'}</span>
                     </td>

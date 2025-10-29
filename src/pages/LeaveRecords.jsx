@@ -261,6 +261,7 @@ const LeaveRecords = () => {
               <tr>
                 <th className="py-3 px-4 text-left">Employee</th>
                 <th className="py-3 px-4 text-left">Teams</th>
+                <th className="py-3 px-4 text-left">Reason</th>
                 <th className="py-3 px-4 text-left">Start</th>
                 <th className="py-3 px-4 text-left">End</th>
                 <th className="py-3 px-4 text-left">Leave Days Count</th>
@@ -272,6 +273,7 @@ const LeaveRecords = () => {
                 <tr key={leave.id} className="border-t">
                   <td className="py-2 px-4">{leave.employee_name}</td>
                   <td className="py-2 px-4">{renderTeams(leave)}</td>
+                  <td className="py-2 px-4">{leave.reason}</td>
                   <td className="py-2 px-4">{formatYMD(leave.start_date)}</td>
                   <td className="py-2 px-4">{formatYMD(leave.end_date)}</td>
                   <td className="py-2 px-4">{leave.total_days}</td>

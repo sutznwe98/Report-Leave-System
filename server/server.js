@@ -176,39 +176,92 @@ app.get(
   }
 );
 
-// CREATE REPORT (public) — accepts both new and legacy keys and supports extra columns
+// CREATE REPORT (public) — accepts both new and legacy keys and supports many schema variants
 app.post("/api/reports", async (req, res) => {
   // Accept both new and legacy payload shapes
   const employee_id = req.body.employee_id ?? req.body.user_id ?? req.body.employeeId;
-  const reportText = req.body.reportText ?? req.body.report_text;
+  const reportText = req.body.reportText ?? req.body.report_text ?? req.body.report; // support 'report'
   const status = req.body.status ?? req.body.compliance_status;
 
   if (!employee_id || !reportText || !status) {
     return res.status(200).json({ message: "Skipped: insufficient data." });
   }
 
-  try {
-    // First try inserting with submission_time and report_date for schemas that require them
-    const sqlFull =
-      "INSERT INTO reports (employee_id, report_text, compliance_status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())";
+  // We'll try several insert patterns to handle different DB schemas
+  const attempts = [
+    // Full variants with report_text
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, compliance_status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())",
+      params: [employee_id, reportText, status],
+    },
+    // Minimal variants with report_text
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, compliance_status, created_at) VALUES (?, ?, ?, NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, status, created_at) VALUES (?, ?, ?, NOW())",
+      params: [employee_id, reportText, status],
+    },
+    // Minimal-no-created_at variants with report_text
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, compliance_status) VALUES (?, ?, ?)",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report_text, status) VALUES (?, ?, ?)",
+      params: [employee_id, reportText, status],
+    },
+    // Repeat all with column name 'report' instead of 'report_text'
+    {
+      sql: "INSERT INTO reports (employee_id, report, compliance_status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report, status, submission_time, report_date, created_at) VALUES (?, ?, ?, NOW(), CURDATE(), NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report, compliance_status, created_at) VALUES (?, ?, ?, NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report, status, created_at) VALUES (?, ?, ?, NOW())",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report, compliance_status) VALUES (?, ?, ?)",
+      params: [employee_id, reportText, status],
+    },
+    {
+      sql: "INSERT INTO reports (employee_id, report, status) VALUES (?, ?, ?)",
+      params: [employee_id, reportText, status],
+    },
+  ];
+
+  let lastErr = null;
+  for (const attempt of attempts) {
     try {
-      const [result] = await db.query(sqlFull, [employee_id, reportText, status]);
+      const [result] = await db.query(attempt.sql, attempt.params);
       return res.status(201).json({ message: "Report submitted", reportId: result.insertId });
-    } catch (errFull) {
-      // If columns don't exist, fall back to minimal insert
-      if (errFull && (errFull.code === 'ER_BAD_FIELD_ERROR' || errFull.code === 'ER_NO_SUCH_FIELD')) {
-        const sqlMinimal =
-          "INSERT INTO reports (employee_id, report_text, compliance_status, created_at) VALUES (?, ?, ?, NOW())";
-        const [result] = await db.query(sqlMinimal, [employee_id, reportText, status]);
-        return res.status(201).json({ message: "Report submitted", reportId: result.insertId });
+    } catch (err) {
+      // Only continue on field/table errors; break on anything else
+      if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_FIELD' || err.code === 'ER_BAD_TABLE_ERROR' || err.code === 'ER_WRONG_VALUE' || err.code === 'ER_TRUNCATED_WRONG_VALUE')) {
+        lastErr = err;
+        continue;
+      } else {
+        lastErr = err;
+        break;
       }
-      console.error('Full insert failed:', errFull);
-      return res.status(500).json({ message: "Database error." });
     }
-  } catch (err) {
-    console.error('Report create error:', err);
-    res.status(500).json({ message: "Database error." });
   }
+
+  console.error('All report insert attempts failed:', lastErr);
+  return res.status(500).json({ message: 'Failed to create report.', error: lastErr?.message || 'Unknown error' });
 });
 
 // GET ALL REPORTS (public)
@@ -377,6 +430,11 @@ app.get('/api/leaves/employee/me', async (req, res) => {
     const [leaves] = await db.query(query, [userId]);
     res.json(leaves);
   } catch (error) {
+    console.error('Error fetching employee leaves:', error);
+    res.status(500).json({ message: 'Server error fetching leaves.' });
+  }
+});
+
 // CREATE LEAVE REQUEST (public)
 app.post("/api/leaves", upload, async (req, res) => {
   const employee_id = req.body.employee_id;

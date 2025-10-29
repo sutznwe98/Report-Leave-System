@@ -121,7 +121,7 @@ const determineComplianceStatus = (submissionTime) => {
   } else if (timeInMinutes <= HUL_CUTOFF) {
     return "HUL";
   } else {
-    return "FUL";
+    return "UPL";
   }
 };
 
@@ -600,7 +600,7 @@ app.get(
           case "Late":
             stats.late_count = row.count;
             break;
-          case "FUL":
+          case "UPL":
             stats.ful_count = row.count;
             break;
           default:
