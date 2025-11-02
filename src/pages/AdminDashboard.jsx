@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 // Using lucide-react for icons (assuming it's available in the environment)
-import { List, CheckCircle, XCircle, Loader2, ArrowRight } from "lucide-react";
+import { List, XCircle, Loader2, ArrowRight } from "lucide-react";
 
 const API_URL = "http://localhost:5000/api";
 
@@ -22,8 +22,6 @@ const AdminDashboard = () => {
     const dd = String(today.getDate()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd}`;
   };
-
-  const today = todayDate();
 
   const isSameLocalDate = (dt) => {
     if (!dt) return false;
@@ -58,11 +56,10 @@ const AdminDashboard = () => {
         const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
         const employees = employeesRaw.map((emp) => ({
           ...emp,
-          teams: Array.isArray(emp.teams)
-            ? emp.teams
-            : (typeof emp.team === 'string'
+          // Correctly parse the 'team' string from the DB into a 'teams' array
+          teams: (typeof emp.team === 'string'
                 ? emp.team.split(',').map((t) => t.trim()).filter(Boolean)
-                : []),
+                : (Array.isArray(emp.teams) ? emp.teams : [])),
         }));
 
         const byId = new Map(employees.map((e) => [e.id, e]));
@@ -135,6 +132,11 @@ const AdminDashboard = () => {
   const todaysReports = reports
     .filter((r) => isSameLocalDate(r.report_date) || isSameLocalDate(r.submission_time) || isSameLocalDate(r.created_at))
     .sort((a, b) => new Date(b.submission_time || b.report_date || b.created_at) - new Date(a.submission_time || a.report_date || a.created_at));
+
+  // Determine which reports to display and what the count should be
+  const reportsToDisplay = todaysReports.length > 0 ? todaysReports : reports.slice(0, 10);
+  const pendingLeaves = leaves.filter(l => (l.status || '').toLowerCase() === 'pending');
+
 
   // Helper to determine badge colors
   const getLeaveStatusClasses = (status) => {
@@ -247,7 +249,7 @@ const AdminDashboard = () => {
                 Leave Requests
               </h2>
               <span className="text-xl font-extrabold text-purple-600 bg-purple-100 px-4 py-1 rounded-full">
-                {leaves.filter(l => (l.status || '').toLowerCase() === 'pending').length}
+                {pendingLeaves.length}
               </span>
             </div>
 
@@ -286,7 +288,7 @@ const AdminDashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200 font-semibold">
-                    {leaves.filter(l => (l.status || '').toLowerCase() === 'pending').map((l) => (
+                    {pendingLeaves.map((l) => (
                       <tr key={l.id} className="hover:bg-gray-50 transition duration-150">
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {l.employee_name || "N/A"}
@@ -332,9 +334,11 @@ const AdminDashboard = () => {
                   </tbody>
                 </table>
               ) : (
-                <div className="text-center py-10 text-gray-500">
-                  <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-400" />
-                  <p className="font-medium">No pending leave requests found.</p>
+                <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto mb-2 text-gray-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5" />
+                  </svg>
+                  No pending leave requests found.
                 </div>
               )}
             </div>
@@ -348,12 +352,12 @@ const AdminDashboard = () => {
                 Compliance Reports
               </h2>
               <span className="text-xl font-extrabold text-purple-600 bg-purple-100 px-4 py-1 rounded-full">
-                {todaysReports.length}
+                {reportsToDisplay.length}
               </span>
             </div>
 
-            <div className="p-0 overflow-x-auto max-h-96">
-              {(todaysReports.length > 0 ? todaysReports : reports.slice(0, 10)).length > 0 ? (
+          <div className="p-0 overflow-x-auto max-h-96">
+            {reportsToDisplay.length > 0 ? (
                 <>
                   {todaysReports.length === 0 && (
                     <div className="px-6 py-3 text-xs text-gray-500">No reports for today. Showing latest 10.</div>
@@ -382,7 +386,7 @@ const AdminDashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {(todaysReports.length > 0 ? todaysReports : reports.slice(0, 10)).map((r) => (
+                    {reportsToDisplay.map((r) => (
                       <tr key={r.id} className="hover:bg-gray-50 transition duration-150">
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {formatYMD(r.report_date) || "N/A"}
@@ -414,9 +418,11 @@ const AdminDashboard = () => {
                 </table>
                 </>
               ) : (
-                <div className="text-center py-10 text-gray-500">
-                  <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-400" />
-                  <p className="font-medium">No reports for today.</p>
+                <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto mb-2 text-gray-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5" />
+                  </svg>
+                  No compliance reports found for today.
                 </div>
               )}
             </div>

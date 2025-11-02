@@ -15,6 +15,11 @@ const LeaveRecords = () => {
   const [error, setError] = useState("");
   const [filterFromDate, setFilterFromDate] = useState("");
   const [filterToDate, setFilterToDate] = useState("");
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    leaveId: null,
+  });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchLeavesFromServer = async () => {
     if (!user) return;
@@ -43,9 +48,12 @@ const LeaveRecords = () => {
       const employees = employeesRaw.map((emp) => ({
         ...emp,
         teams: Array.isArray(emp.teams)
-          ? emp.teams
-          : typeof emp.team === "string"
-          ? emp.team.split(",").map((t) => t.trim()).filter(Boolean)
+          ? emp.teams // if teams array already exists, use it
+          : typeof emp.team === "string" // otherwise, parse the 'team' string
+          ? emp.team
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
           : [],
       }));
 
@@ -56,8 +64,7 @@ const LeaveRecords = () => {
       const enrich = (leave) => {
         const start = new Date(leave.start_date);
         const end = new Date(leave.end_date);
-        const diffDays =
-          Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 
         const possibleIds = [
           leave.employee_id,
@@ -150,11 +157,67 @@ const LeaveRecords = () => {
     setLeaves(leavesAll);
   };
 
+  // const handleDeleteLeaveDirect = async (id) => {
+  //   setIsDeleting(true);
+  //   try {
+  //     console.log("Deleting leave with id:", id);
+  //     await axios.delete(`${API_URL}/leaves/${id}`, {
+  //       headers: { Authorization: `Bearer ${token}` },
+  //     });
+  //     setLeaves((prev) => prev.filter((l) => l.id !== id));
+  //     setLeavesAll((prev) => prev.filter((l) => l.id !== id));
+  //   } catch (err) {
+  //     console.error("Failed to delete leave:", err);
+  //     setError(err.response?.data?.message || "Failed to delete leave record.");
+  //   } finally {
+  //     setIsDeleting(false);
+  //   }
+  // };
+
+
+ const handleConfirmDelete = async () => {
+    const idToDelete = confirmModal.leaveId;
+
+    // CRITICAL: Robust check against the event object error
+    if (idToDelete === null || typeof idToDelete === 'object') {
+        console.error("CRITICAL ERROR: Invalid ID in modal state. Deletion aborted.", idToDelete);
+        setError("Error: Invalid record ID for deletion.");
+        closeDeleteConfirm();
+        return;
+    }
+
+    setIsDeleting(true);
+    try {
+      console.log("Deleting leave with id:", idToDelete);
+      await axios.delete(`${API_URL}/leaves/${idToDelete}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // Update local state arrays
+      setLeaves((prev) => prev.filter((l) => l.id !== idToDelete));
+      setLeavesAll((prev) => prev.filter((l) => l.id !== idToDelete));
+      // Clear any prior errors on success
+      setError("");
+    } catch (err) {
+      console.error("Failed to delete leave:", err);
+      setError(
+        err.response?.data?.message ||
+        `Failed to delete leave record (ID: ${idToDelete}).`
+      );
+    } finally {
+      setIsDeleting(false);
+      closeDeleteConfirm();
+    }
+  };
+
+  const closeDeleteConfirm = () => {
+    setConfirmModal({ isOpen: false, leaveId: null });
+  };
+
   const formatYMD = (dt) => {
     if (!dt) return "N/A";
     const d = new Date(dt);
     if (isNaN(d.getTime())) return "N/A";
-    const y = d.getFullYear();
+    const y = d.getFullYear(); 
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
@@ -166,7 +229,10 @@ const LeaveRecords = () => {
       : Array.isArray(obj?.employee_teams)
       ? obj.employee_teams
       : typeof obj?.team === "string"
-      ? obj.team.split(",").map((t) => t.trim()).filter(Boolean)
+      ? obj.team
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
       : [];
     return arr.length ? arr.join(", ") : "N/A";
   };
@@ -250,7 +316,21 @@ const LeaveRecords = () => {
 
       {!loading && !error && leaves.length === 0 && (
         <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
-          <p>No leave records found matching your current filters.</p>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-8 h-8 mx-auto mb-2 text-gray-400"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5"
+            />
+          </svg>
+          No leave records found matching your current filters.
         </div>
       )}
 
@@ -260,12 +340,13 @@ const LeaveRecords = () => {
             <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
               <tr>
                 <th className="py-3 px-4 text-left">Employee</th>
-                <th className="py-3 px-4 text-left">Teams</th>
+                <th className="py-3 px-4 text-left">Project</th>
                 <th className="py-3 px-4 text-left">Reason</th>
                 <th className="py-3 px-4 text-left">Start</th>
                 <th className="py-3 px-4 text-left">End</th>
                 <th className="py-3 px-4 text-left">Leave Days Count</th>
                 <th className="py-3 px-4 text-left">Status</th>
+                <th className="py-3 px-4 text-left">Action</th>
               </tr>
             </thead>
             <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
@@ -289,6 +370,24 @@ const LeaveRecords = () => {
                     >
                       {leave.status}
                     </span>
+                  </td>
+
+                  <td className="py-2 px-4 text-center">
+                    <button
+                      onClick={() => navigate(`/admin/leaves/${leave.id}`)}
+                      className="text-indigo-600 hover:text-indigo-900 transition-colors font-semibold"
+                    >
+                      Detail
+                    </button>
+                    <button
+                      onClick={() =>
+                        setConfirmModal({ isOpen: true, leaveId: leave.id })
+                      }
+                      className="text-red-600 hover:text-red-900 transition-colors font-semibold ml-4"
+                      disabled={isDeleting}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -346,6 +445,33 @@ const LeaveRecords = () => {
               )}
             </div>
           ))}
+        </div>
+      )}
+      {/* ✅ Add your confirmation modal below */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-80">
+            <h3 className="text-lg font-semibold mb-4">Confirm Delete</h3>
+            <p className="text-gray-700 mb-6">
+              Are you sure you want to delete this leave record?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={closeDeleteConfirm}
+                className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300"
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

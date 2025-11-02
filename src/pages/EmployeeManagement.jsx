@@ -10,14 +10,17 @@ import axios from "axios";
 
 // --- Configuration ---
 const API_URL = "http://localhost:5000/api";
-const DEFAULT_TEAMS = ["MOT", "MOE", "AI"];
+const DEFAULT_TEAMS = ["MOT", "MOE"];
 const initialFormData = {
   id: null,
   name: "",
   email: "",
+  role: "",
   password: "",
   position: "",
   teams: [],
+  join_date: "",
+  birthday: "",
 };
 
 // --- Auth Context ---
@@ -68,10 +71,14 @@ export const AuthProvider = ({ children }) => {
       // Fallback logic for frontend-only demo
       if (!localStorage.getItem("token")) {
         // Mock user based on attempted login email, or a default
-        const mockEmail = email || "admin@ems.com"; 
+        const mockEmail = email || "admin@ems.com";
         const mockToken = "mock-admin-token-fallback";
-        const mockUser = { id: "ADM_MOCK", name: "Mock Admin", email: mockEmail };
-        
+        const mockUser = {
+          id: "ADM_MOCK",
+          name: "Mock Admin",
+          email: mockEmail,
+        };
+
         localStorage.setItem("token", mockToken);
         localStorage.setItem("user", JSON.stringify(mockUser));
         setToken(mockToken);
@@ -276,6 +283,84 @@ const MultiSelectDropdown = ({
   );
 };
 
+// --- SingleSelect Dropdown ---
+const SingleSelectDropdown = ({
+  options,
+  selectedValue,
+  onSelect,
+  placeholder = "Select an option",
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSelect = (option) => {
+    onSelect(option.value);
+    setIsOpen(false);
+  };
+
+  const selectedLabel =
+    options.find((opt) => opt.value === selectedValue)?.label || selectedValue;
+  const displayLabel = selectedLabel || placeholder;
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        className="w-full text-left bg-white border border-gray-300 rounded-lg shadow-sm px-4 py-2 text-gray-700 hover:bg-gray-50 flex justify-between items-center"
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+      >
+        <span
+          className={`truncate ${
+            !selectedValue ? "text-gray-500" : "text-gray-900"
+          }`}
+        >
+          {displayLabel}
+        </span>
+        <svg
+          className={`w-4 h-4 transition-transform duration-200 ml-2 ${
+            isOpen ? "transform rotate-180" : ""
+          }`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-20 mt-1 w-full rounded-lg shadow-2xl bg-white border border-gray-200 max-h-48 overflow-y-auto">
+          {options.map((option) => (
+            <div
+              key={option.value}
+              onClick={() => handleSelect(option)}
+              className="p-2 cursor-pointer hover:bg-indigo-50 transition-colors text-gray-900 text-sm font-medium"
+            >
+              {option.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- Employee Management Component ---
 const EmployeeManagement = () => {
   const { isAuthenticated, login } = useAuth();
@@ -302,6 +387,22 @@ const EmployeeManagement = () => {
   const [formApiError, setFormApiError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
+  const roleOptions = [
+    { value: "employee", label: "Employee" },
+    { value: "dept head", label: "Dept Head" },
+    { value: "admin", label: "Admin" },
+  ];
+
+  const formatDateForDisplay = (dateString) => {
+    if (!dateString) return "N/A";
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("en-CA"); // YYYY-MM-DD format
+    } catch (e) {
+      return "Invalid Date";
+    }
+  };
+
   const fetchEmployees = useCallback(async () => {
     setError("");
     setIsLoading(true);
@@ -312,9 +413,12 @@ const EmployeeManagement = () => {
         ...emp,
         teams: Array.isArray(emp.teams)
           ? emp.teams
-          : (typeof emp.team === 'string'
-              ? emp.team.split(',').map(t => t.trim()).filter(Boolean)
-              : []),
+          : typeof emp.team === "string"
+          ? emp.team
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : [],
       }));
       setEmployees(transformedEmployees);
       const allTeamsFromData = new Set(
@@ -326,8 +430,11 @@ const EmployeeManagement = () => {
     } catch (err) {
       const status = err.response?.status;
       if (status === 401 || status === 403) {
-        try { localStorage.removeItem('token'); localStorage.removeItem('user'); } catch (_) {}
-        window.location.href = '/login';
+        try {
+          localStorage.removeItem("token");
+          localStorage.removeItem("user");
+        } catch (_) {}
+        window.location.href = "/login";
         return;
       }
       setError(`Failed to fetch employees. ${err.message}`);
@@ -382,7 +489,7 @@ const EmployeeManagement = () => {
         console.log("Not authenticated, attempting login...");
         try {
           // Attempt login without explicit credentials, relying on fallback logic inside login
-          await login(); 
+          await login();
         } catch (authError) {
           console.error("Auth failed during init", authError);
           setError("Authentication failed. Please try again later.");
@@ -434,8 +541,22 @@ const EmployeeManagement = () => {
   };
 
   const handleOpenEditModal = (emp) => {
+    // Helper to format date strings (like '2023-10-27T17:00:00.000Z') to 'YYYY-MM-DD' for the input
+    const formatDateForInput = (dateString) => {
+      if (!dateString) return "";
+      try {
+        return new Date(dateString).toISOString().split("T")[0];
+      } catch (e) {
+        return "";
+      }
+    };
     // Reset password field when opening edit modal
-    setFormData({ ...emp, password: "" });
+    setFormData({
+      ...emp,
+      password: "",
+      join_date: formatDateForInput(emp.join_date),
+      birthday: formatDateForInput(emp.birthday),
+    });
     setIsEditMode(true);
     setTeamCreationError("");
     setFormApiError(""); // Clear API error
@@ -458,14 +579,17 @@ const EmployeeManagement = () => {
     setSuccessMessage(""); // Clear previous success message
     setFormApiError(""); // Clear previous API error from modal
     try {
-      const token = localStorage.getItem('token');
-      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      const token = localStorage.getItem("token");
+      const config = token
+        ? { headers: { Authorization: `Bearer ${token}` } }
+        : {};
 
       const payload = {
         ...formData,
-        name: (formData.name || '').trim(),
-        email: (formData.email || '').trim(),
-        position: (formData.position || '').trim(),
+        name: (formData['Employee Data'] || "").trim(),
+        Email: (formData.Email || "").trim(),
+        Position: (formData.Position || "").trim(),
+        Project: Array.isArray(formData.teams) ? formData.teams.join(',') : '',
       };
 
       if (isEditMode) {
@@ -479,14 +603,18 @@ const EmployeeManagement = () => {
       handleCloseModal(); // Close modal only on success
     } catch (err) {
       console.error("Submit failed:", err);
-      
-      const errorMessage = err.response 
+
+      const errorMessage = err.response
         ? err.response.data.message || err.message
         : err.message;
-      
+
       // CRITICAL FIX: If it's a validation error (like duplicate email, status 400-499),
       // set the error inside the modal and DO NOT close it.
-      if (err.response && err.response.status >= 400 && err.response.status < 500) {
+      if (
+        err.response &&
+        err.response.status >= 400 &&
+        err.response.status < 500
+      ) {
         setFormApiError(`Failed to submit: ${errorMessage}`);
       } else {
         // For other server errors, show the error on the main page and close modal.
@@ -500,6 +628,12 @@ const EmployeeManagement = () => {
 
   // --- Delete Logic ---
   const openDeleteConfirm = (emp) => {
+    // Prevent deleting super admin (admin role)
+    const role = emp?.role ? String(emp.role).toLowerCase() : "";
+    if (role === "admin") {
+      setError("Super admin account cannot be deleted.");
+      return;
+    }
     setConfirmModal({
       isOpen: true,
       employeeId: emp.id,
@@ -519,21 +653,77 @@ const EmployeeManagement = () => {
     setSuccessMessage("");
 
     try {
-      await axios.delete(`${API_URL}/employees/${confirmModal.employeeId}`);
-      setSuccessMessage(
-        `Employee ${confirmModal.employeeName} deleted successfully.`
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("No authentication token found. Please log in again.");
+      }
+
+      console.log("Attempting to delete employee ID:", confirmModal.employeeId);
+      console.log("Authorization token:", token ? "Token exists" : "No token");
+
+      const response = await axios.delete(
+        `${API_URL}/employees/${confirmModal.employeeId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
       );
-      fetchEmployees(); // Refresh list
-      setSelectedEmployeeIds((prev) =>
-        prev.filter((id) => id !== confirmModal.employeeId)
-      ); // Remove from selection
+
+      console.log("Delete response:", response.data);
+
+      if (response.data.success) {
+        setSuccessMessage(
+          `Employee ${confirmModal.employeeName} deleted successfully.`
+        );
+        fetchEmployees(); // Refresh list
+        setSelectedEmployeeIds((prev) =>
+          prev.filter((id) => id !== confirmModal.employeeId)
+        );
+      } else {
+        throw new Error(response.data.message || "Failed to delete employee");
+      }
     } catch (err) {
-      console.error("Delete failed:", err);
-      setError(
-        `Failed to delete employee. ${
-          err.response ? err.response.data.message : err.message
-        }`
-      );
+      console.error("Delete failed:", {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        config: {
+          url: err.config?.url,
+          method: err.config?.method,
+          headers: {
+            ...err.config?.headers,
+            // Don't log the actual token
+            Authorization: err.config?.headers?.Authorization
+              ? "Bearer [TOKEN]"
+              : "Not set",
+          },
+        },
+      });
+
+      let errorMessage = "Failed to delete employee. Please try again.";
+
+      if (err.response) {
+        // Server responded with an error status code
+        if (err.response.status === 403) {
+          errorMessage = "You do not have permission to delete employees.";
+        } else if (err.response.status === 404) {
+          errorMessage = "Employee not found or already deleted.";
+        } else if (err.response.data?.message) {
+          errorMessage = err.response.data.message;
+        }
+      } else if (err.request) {
+        // Request was made but no response received
+        errorMessage = "No response from server. Please check your connection.";
+      } else {
+        // Something happened in setting up the request
+        errorMessage =
+          err.message || "An error occurred while setting up the request.";
+      }
+
+      setError(errorMessage);
     } finally {
       setIsSubmitting(false);
       closeDeleteConfirm();
@@ -599,12 +789,8 @@ const EmployeeManagement = () => {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
             <tr>
-              <th scope="col" className="px-6 py-3 text-center w-12">
-              </th>
-              <th
-                scope="col"
-                className="py-3 px-4 text-left"
-              >
+              <th scope="col" className="px-6 py-3 text-center w-12"></th>
+              <th scope="col" className="py-3 px-4 text-left">
                 Name
               </th>
               <th
@@ -627,6 +813,30 @@ const EmployeeManagement = () => {
               </th>
               <th
                 scope="col"
+                className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+              >
+                Join Date
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+              >
+                Birthday
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+              >
+                Join Date
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+              >
+                Birthday
+              </th>
+              <th
+                scope="col"
                 className="px-6 py-3 text-center text-xs font-bold text-gray-600 uppercase tracking-wider"
               >
                 Actions
@@ -637,8 +847,7 @@ const EmployeeManagement = () => {
             {employees.length > 0 ? (
               employees.map((emp) => (
                 <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-center">
-                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center"></td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {emp.name}
                   </td>
@@ -651,6 +860,12 @@ const EmployeeManagement = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                     {(emp.teams || []).join(", ") || "N/A"}
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    {formatDateForDisplay(emp.join_date)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    {formatDateForDisplay(emp.birthday)}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-3">
                     <button
                       onClick={() => handleOpenEditModal(emp)}
@@ -658,19 +873,21 @@ const EmployeeManagement = () => {
                     >
                       Edit
                     </button>
-                    <button
-                      onClick={() => openDeleteConfirm(emp)}
-                      className="text-red-600 hover:text-red-900 transition-colors"
-                    >
-                      Delete
-                    </button>
+                    {String(emp.role || "").toLowerCase() !== "admin" && (
+                      <button
+                        onClick={() => openDeleteConfirm(emp)}
+                        className="text-red-600 hover:text-red-900 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
                 <td
-                  colSpan="6"
+                  colSpan="8"
                   className="px-6 py-12 text-center text-gray-500"
                 >
                   {isLoading ? "Loading..." : "No employees found."}
@@ -696,15 +913,15 @@ const EmployeeManagement = () => {
               <span className="block sm:inline">{formApiError}</span>
             </div>
           )}
-          
-          <form onSubmit={handleFormSubmit} className="space-y-5">
+
+          <form onSubmit={handleFormSubmit} className="space-y-5" noValidate>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Name
               </label>
               <input
                 type="text"
-                name="name"
+                name="Employee Data"
                 placeholder="Full Name"
                 value={formData.name}
                 onChange={handleInputChange}
@@ -719,7 +936,7 @@ const EmployeeManagement = () => {
               </label>
               <input
                 type="email"
-                name="email"
+                name="Email"
                 placeholder="Email Address"
                 value={formData.email}
                 onChange={handleInputChange}
@@ -752,29 +969,90 @@ const EmployeeManagement = () => {
                   className="w-full border-gray-300 px-3 py-2 pr-10 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
                   required={!isEditMode}
                   autoComplete="new-password"
-                  minLength={8}
-                  maxLength={128}
-                  pattern={"(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d@$!%*#?&]{8,128}"}
-                  title="Password must be 8+ characters and include letters and numbers."
                 />
               </div>
             </div>
-          {/* --- END PASSWORD FIELD --- */}
+            {/* --- END PASSWORD FIELD --- */}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Position
-            </label>
-            <input
-              type="text"
-              name="position"
-              placeholder="Job Title"
-              value={formData.position}
-              onChange={handleInputChange}
-              className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-              maxLength={100}
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Position
+              </label>
+              <input
+                type="text"
+                name="Position"
+                placeholder="Job Title"
+                value={formData.position}
+                onChange={handleInputChange}
+                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                maxLength={100}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Join Date
+              </label>
+              <input
+                type="date"
+                name="Joined Date"
+                value={formData.join_date}
+                onChange={handleInputChange}
+                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Birthday
+              </label>
+              <input
+                type="date"
+                name="Real Birth Date"
+                value={formData.birthday}
+                onChange={handleInputChange}
+                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Join Date
+              </label>
+              <input
+                type="date"
+                name="Joined Date"
+                value={formData.join_date}
+                onChange={handleInputChange}
+                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Birthday
+              </label>
+              <input
+                type="date"
+                name="Real Birth Date"
+                value={formData.birthday}
+                onChange={handleInputChange}
+                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+
+                        {/* --- Add Role --- */}
+            <div className="z-20">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Role
+              </label>
+              <SingleSelectDropdown
+                options={roleOptions}
+                selectedValue={formData.role}
+                onSelect={(role) => setFormData({ ...formData, role })}
+                placeholder="Select a role..."
+              />
+            </div>
 
             {/* --- Project/Team Selection --- */}
             <div>
@@ -795,7 +1073,9 @@ const EmployeeManagement = () => {
                 Add New Project
               </label>
               {teamCreationError && (
-                <div className="text-red-600 text-sm mb-2">{teamCreationError}</div>
+                <div className="text-red-600 text-sm mb-2">
+                  {teamCreationError}
+                </div>
               )}
               <div className="flex items-center gap-2">
                 <input

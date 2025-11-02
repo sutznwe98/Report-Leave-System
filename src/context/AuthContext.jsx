@@ -10,9 +10,17 @@ export const AuthProvider = ({ children }) => {
 
     useEffect(() => {
         const userString = localStorage.getItem('user');
+        const token = localStorage.getItem('token');
+        
         if (userString) {
             setUser(JSON.parse(userString));
         }
+        
+        // If there's a token in localStorage, set it as the default Authorization header
+        if (token) {
+            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        }
+        
         setLoading(false);
     }, []);
 

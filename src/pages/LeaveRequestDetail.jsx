@@ -19,13 +19,12 @@ import {
 // The API_URL is defined here, assuming it's correctly set to "http://localhost:5000/api"
 const API_URL = "http://localhost:5000/api";
 
-// --- New: Defined Leave Types for the dropdown ---
+// --- Updated: Leave types are now objects with label and value ---
 const LEAVE_TYPES = [
-  "Annual Leave (AL)",
-  "Medical Leave (ML)",
-  "Unpaid Leave (UPL)",
-  "Half Morning Leave (HML)",
-  "Half Evening Leave (HEL)",
+  { label: "Annual Leave (AL)", value: "AL" },
+  { label: "Medical Leave (ML)", value: "ML" },
+  { label: "Unpaid Leave (UPL)", value: "UPL" },
+  { label: "Half Unpaid Leave (HUPL)", value: "HUPL" },
 ];
 
 // Helper function to format dates
@@ -48,16 +47,28 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
       ? obj.projects
       : Array.isArray(obj?.employee_projects)
       ? obj.employee_projects
-      : (typeof obj?.team === 'string'
-          ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
-          : (typeof obj?.projects === 'string'
-              ? obj.projects.split(',').map(t => t.trim()).filter(Boolean)
-              : (typeof obj?.project === 'string'
-                  ? obj.project.split(',').map(t => t.trim()).filter(Boolean)
-                  : (typeof obj?.project_name === 'string'
-                      ? obj.project_name.split(',').map(t => t.trim()).filter(Boolean)
-                      : []))));
-    return arr.length ? arr.join(', ') : 'N/A';
+      : typeof obj?.team === "string"
+      ? obj.team
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : typeof obj?.projects === "string"
+      ? obj.projects
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : typeof obj?.project === "string"
+      ? obj.project
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : typeof obj?.project_name === "string"
+      ? obj.project_name
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : [];
+    return arr.length ? arr.join(", ") : "N/A";
   };
 
   const [leave, setLeave] = useState(null);
@@ -113,67 +124,127 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
 
         try {
           // Fetch full employees list to allow robust matching
-          const empListRes = await axios.get(`${API_URL}/employees`, { headers });
-          const employeesRaw = Array.isArray(empListRes.data) ? empListRes.data : [];
+          const empListRes = await axios.get(`${API_URL}/employees`, {
+            headers,
+          });
+          const employeesRaw = Array.isArray(empListRes.data)
+            ? empListRes.data
+            : [];
 
           // Normalize each employee's teams (support various fields)
           const toTeams = (obj) => {
             if (Array.isArray(obj?.teams)) return obj.teams;
             if (Array.isArray(obj?.employee_teams)) return obj.employee_teams;
             if (Array.isArray(obj?.projects)) return obj.projects;
-            if (Array.isArray(obj?.employee_projects)) return obj.employee_projects;
-            if (typeof obj?.team === 'string') return obj.team.split(',').map(t => t.trim()).filter(Boolean);
-            if (typeof obj?.projects === 'string') return obj.projects.split(',').map(t => t.trim()).filter(Boolean);
-            if (typeof obj?.project === 'string') return obj.project.split(',').map(t => t.trim()).filter(Boolean);
-            if (typeof obj?.project_name === 'string') return obj.project_name.split(',').map(t => t.trim()).filter(Boolean);
+            if (Array.isArray(obj?.employee_projects))
+              return obj.employee_projects;
+            if (typeof obj?.team === "string")
+              return obj.team
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+            if (typeof obj?.projects === "string")
+              return obj.projects
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+            if (typeof obj?.project === "string")
+              return obj.project
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+            if (typeof obj?.project_name === "string")
+              return obj.project_name
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
             return [];
           };
 
-          const employees = employeesRaw.map(emp => ({
+          const employees = employeesRaw.map((emp) => ({
             ...emp,
             teams: toTeams(emp),
           }));
 
           // Build lookup maps
-          const byId = new Map(employees.map(e => [e.id, e]));
-          const byEmail = new Map(employees.map(e => [e.email, e]));
-          const byName = new Map(employees.map(e => [e.name, e]));
+          const byId = new Map(employees.map((e) => [e.id, e]));
+          const byEmail = new Map(employees.map((e) => [e.email, e]));
+          const byName = new Map(employees.map((e) => [e.name, e]));
 
           // Collect possible keys from leave and match with case/trim insensitivity
-          const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase());
+          const norm = (v) => (v == null ? "" : String(v).trim().toLowerCase());
 
-          const possibleIds = [enriched.employee_id, enriched.employeeId, enriched.user_id, enriched.userId];
-          const possibleEmails = [enriched.employee_email, enriched.email, enriched.user_email];
-          const possibleNames = [enriched.employee_name, enriched.name, enriched.user_name, enriched.employee];
+          const possibleIds = [
+            enriched.employee_id,
+            enriched.employeeId,
+            enriched.user_id,
+            enriched.userId,
+          ];
+          const possibleEmails = [
+            enriched.employee_email,
+            enriched.email,
+            enriched.user_email,
+          ];
+          const possibleNames = [
+            enriched.employee_name,
+            enriched.name,
+            enriched.user_name,
+            enriched.employee,
+          ];
 
           const foundId = possibleIds.find((id) => id && byId.get(id));
 
           let foundEmailKey = null;
           if (!foundId) {
-            const emailSet = new Map(Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v]));
+            const emailSet = new Map(
+              Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v])
+            );
             for (const em of possibleEmails) {
               const n = norm(em);
-              if (n && emailSet.has(n)) { foundEmailKey = n; break; }
+              if (n && emailSet.has(n)) {
+                foundEmailKey = n;
+                break;
+              }
             }
           }
 
           let foundNameKey = null;
           if (!foundId && !foundEmailKey) {
-            const nameSet = new Map(Array.from(byName.entries()).map(([k, v]) => [norm(k), v]));
+            const nameSet = new Map(
+              Array.from(byName.entries()).map(([k, v]) => [norm(k), v])
+            );
             for (const nm of possibleNames) {
               const n = norm(nm);
-              if (n && nameSet.has(n)) { foundNameKey = n; break; }
+              if (n && nameSet.has(n)) {
+                foundNameKey = n;
+                break;
+              }
             }
           }
 
-          const emp = (foundId && byId.get(foundId)) || (foundEmailKey && Array.from(byEmail.entries()).map(([k,v])=>[norm(k),v]).find(([k])=>k===foundEmailKey)?.[1]) || (foundNameKey && Array.from(byName.entries()).map(([k,v])=>[norm(k),v]).find(([k])=>k===foundNameKey)?.[1]);
+          const emp =
+            (foundId && byId.get(foundId)) ||
+            (foundEmailKey &&
+              Array.from(byEmail.entries())
+                .map(([k, v]) => [norm(k), v])
+                .find(([k]) => k === foundEmailKey)?.[1]) ||
+            (foundNameKey &&
+              Array.from(byName.entries())
+                .map(([k, v]) => [norm(k), v])
+                .find(([k]) => k === foundNameKey)?.[1]);
 
           if (emp) {
-            if (!enriched.employee_name) enriched.employee_name = emp.name || enriched.employee_name;
-            const currentTeams = Array.isArray(enriched.teams) ? enriched.teams : (
-              Array.isArray(enriched.employee_teams) ? enriched.employee_teams : null
-            );
-            const currentTeamString = (typeof enriched.team === 'string' && enriched.team.trim()) || (typeof enriched.projects === 'string' && enriched.projects.trim());
+            if (!enriched.employee_name)
+              enriched.employee_name = emp.name || enriched.employee_name;
+            const currentTeams = Array.isArray(enriched.teams)
+              ? enriched.teams
+              : Array.isArray(enriched.employee_teams)
+              ? enriched.employee_teams
+              : null;
+            const currentTeamString =
+              (typeof enriched.team === "string" && enriched.team.trim()) ||
+              (typeof enriched.projects === "string" &&
+                enriched.projects.trim());
             if (!(currentTeams && currentTeams.length) && !currentTeamString) {
               enriched.teams = emp.teams || [];
             }
@@ -183,16 +254,23 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
         }
 
         // Ensure teams value is consistently an array for rendering
-        if ((!Array.isArray(enriched.teams) || !enriched.teams.length)) {
+        if (!Array.isArray(enriched.teams) || !enriched.teams.length) {
           const candidates = formatTeams(enriched);
-          if (candidates && candidates !== 'N/A') {
-            enriched.teams = candidates.split(',').map(s => s.trim()).filter(Boolean);
+          if (candidates && candidates !== "N/A") {
+            enriched.teams = candidates
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
           }
         }
 
         setLeave(enriched);
         setNewStatus(enriched.status);
-        setNewLeaveType(enriched.leave_type);
+        // Find the matching leave type value from our new structure
+        const matchedType = LEAVE_TYPES.find(
+          (lt) => lt.label === enriched.leave_type || lt.value === enriched.leave_type
+        );
+        setNewLeaveType(matchedType ? matchedType.value : enriched.leave_type);
         setError(null);
       } catch (err) {
         console.error("Error fetching leave details:", err);
@@ -205,102 +283,54 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
     fetchLeave();
   }, [leaveId]);
 
-  // General function to handle STATUS updates (Approve/Reject)
-  const handleUpdateLeave = async (newStatusValue) => {
+  // --- Refactored: Unified function to handle all updates ---
+  const handleUpdateLeave = async (updates) => {
     setIsSubmitting(true);
     setSubmissionMessage(null);
     setError(null);
-
-    // Guard clause: Ensure leave object and ID exist before proceeding
+  
     if (!leave || !leave.id) {
       setError("Cannot process request: Leave details are missing.");
       setIsSubmitting(false);
       return;
     }
-
+  
     try {
       const token = localStorage.getItem("token");
       const headers = { Authorization: `Bearer ${token}` };
-
+  
+      // The payload now includes the current state of both editable fields,
+      // plus any new updates passed into the function.
+      const payload = {
+        leave_type: newLeaveType,
+        status: newStatus,
+        ...updates, // New status or type will overwrite the existing state
+      };
+  
       const response = await axios.put(
-        `${API_URL}/leaves/${leave.id}/status`, // Status endpoint
-        {
-          status: newStatusValue,
-        },
+        `${API_URL}/leaves/${leave.id}`, // Use the general update endpoint
+        payload,
         { headers }
       );
-
+  
       // Update local state and show success message
-      setLeave(response.data);
+      const updatedLeave = response.data;
+      setLeave(updatedLeave);
       setNewStatus(response.data.status);
-      setSubmissionMessage(
-        `Leave request successfully set to: ${response.data.status}`
+      // Ensure newLeaveType is also synced with the response
+      const matchedType = LEAVE_TYPES.find(
+        (lt) => lt.label === updatedLeave.leave_type || lt.value === updatedLeave.leave_type
       );
+      setNewLeaveType(matchedType ? matchedType.value : updatedLeave.leave_type);
+  
+      setSubmissionMessage("Leave request successfully updated.");
+  
       if (onUpdate) {
         onUpdate(response.data); // Notify parent component of update
       }
     } catch (err) {
-      // FIX: Improved error logging to prevent circular reference when logging Axios error objects
-      let errorMessage = "Error updating leave details. Please check console.";
-
-      if (err.response) {
-        // Server responded with an error (e.g., 400, 500)
-        errorMessage = `Update failed: ${
-          err.response.data?.message || err.response.statusText
-        }`;
-      } else if (err.message && !err.message.includes("circular")) {
-        // Network error or other simple message
-        errorMessage = `Network error: ${err.message}`;
-      } else {
-        // Catch circular structure error specifically, likely caused by event object propagation
-        errorMessage =
-          "An unexpected internal error occurred (potential circular data structure). Please refresh.";
-      }
-
-      console.error("Error details:", err);
-      setError(errorMessage);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // --- New: Function to handle LEAVE TYPE updates ---
-  const handleUpdateLeaveType = async () => {
-    setIsSubmitting(true);
-    setSubmissionMessage(null);
-    setError(null);
-
-    if (!leave || !leave.id) {
-      setError("Cannot process request: Leave details are missing.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem("token");
-      const headers = { Authorization: `Bearer ${token}` };
-
-      // Assuming a dedicated endpoint for updating details like type
-      const response = await axios.put(
-        `${API_URL}/leaves/${leave.id}`, // Detail update endpoint
-        {
-          leave_type: newLeaveType,
-        },
-        { headers }
-      );
-
-      // Update local state
-      setLeave(response.data);
-      // newLeaveType state is already correct from the select handler
-      setSubmissionMessage(
-        `Leave type successfully updated to: ${response.data.leave_type}`
-      );
-      if (onUpdate) {
-        onUpdate(response.data);
-      }
-    } catch (err) {
-      let errorMessage = "Error updating leave type. Please check console.";
-
+      let errorMessage = "Error updating leave request. Please check console.";
+  
       if (err.response) {
         errorMessage = `Update failed: ${
           err.response.data?.message || err.response.statusText
@@ -310,17 +340,18 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
       } else {
         errorMessage = "An unexpected internal error occurred. Please refresh.";
       }
-
-      console.error("Error updating leave type details:", err);
+  
+      console.error("Error updating leave:", err);
       setError(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
   };
-  // --- End handleUpdateLeaveType ---
+  // --- End of refactored function ---
 
-  const handleApproveLeave = () => handleUpdateLeave("Approved");
-  const handleRejectLeave = () => handleUpdateLeave("Rejected");
+  const handleApproveLeave = () => handleUpdateLeave({ status: "Approved" });
+  const handleRejectLeave = () => handleUpdateLeave({ status: "Rejected" });
+  const handleUpdateLeaveType = () => handleUpdateLeave({ leave_type: newLeaveType });
 
   const renderStatus = (status) => {
     switch (status) {
@@ -396,13 +427,13 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
           </h2>
           <button
             onClick={() =>
-              user.role.toLowerCase() === "admin"
-                ? navigate("/admin/dashboard")
-                : navigate("/employee/dashboard")
+              user.role.toLowerCase() === "admin" // Admins go to the main leave records list
+                ? navigate("/admin/leaves")
+                : navigate("/employee/leave-records") // Employees go to their personal list
             }
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
           >
-            ← Back to Dashboard
+            ← Back to Leave Records
           </button>
         </div>
 
@@ -470,22 +501,27 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
             <p className="text-gray-700 p-4 bg-gray-50 border border-gray-200 rounded-lg shadow-inner italic">
               {leave.reason || "No reason provided."}
             </p>
-
           </div>
 
           {/* Action/History Column */}
           <div className="lg:col-span-1 p-6 sm:p-8 bg-gray-50">
             {leave.medical_certificate_url && (
               <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-3">Image</h3>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                  Image
+                </h3>
                 {(() => {
-                  const raw = leave.medical_certificate_url || '';
-                  const url = raw.replace('0.0.0.0', 'localhost');
+                  const raw = leave.medical_certificate_url || "";
+                  const url = raw.replace("0.0.0.0", "localhost");
                   const isPdf = /\.pdf(\?|$)/i.test(url);
                   if (isPdf) {
                     return (
                       <div className="border rounded-lg overflow-hidden bg-white">
-                        <iframe src={url} title="Medical Certificate PDF" className="w-full h-80" />
+                        <iframe
+                          src={url}
+                          title="Medical Certificate PDF"
+                          className="w-full h-80"
+                        />
                       </div>
                     );
                   }
@@ -494,7 +530,9 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                       src={url}
                       alt="Medical Certificate"
                       className="w-full rounded-lg border shadow"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
                     />
                   );
                 })()}
@@ -541,8 +579,8 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                       disabled={isSubmitting}
                     >
                       {LEAVE_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
+                        <option key={type.value} value={type.value}>
+                          {type.label}
                         </option>
                       ))}
                     </select>

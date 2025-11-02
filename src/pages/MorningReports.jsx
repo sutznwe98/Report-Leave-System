@@ -32,11 +32,10 @@ const MorningReports = () => {
             const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
             const employees = employeesRaw.map(emp => ({
                 ...emp,
-                teams: Array.isArray(emp.teams)
-                    ? emp.teams
-                    : (typeof emp.team === 'string'
-                        ? emp.team.split(',').map(t => t.trim()).filter(Boolean)
-                        : []),
+                teams: (typeof emp.team === 'string'
+                    ? emp.team.split(',').map(t => t.trim()).filter(Boolean)
+                    : (Array.isArray(emp.teams) ? emp.teams : [])
+                ),
             }));
 
             const byId = new Map(employees.map(e => [e.id, e]));
@@ -111,7 +110,7 @@ const MorningReports = () => {
     };
 
     const getStatusBadge = (status) => {
-        switch(status) {
+        switch (status) {
             case 'OnTime': return <span className="px-2 py-1 text-xs font-semibold text-green-700 bg-green-100 rounded-full">On Time</span>;
             case 'Late': return <span className="px-2 py-1 text-xs font-semibold text-yellow-700 bg-yellow-100 rounded-full">Late</span>;
             case 'HUL': return <span className="px-2 py-1 text-xs font-semibold text-orange-700 bg-orange-100 rounded-full">Half Unpaid Leave</span>;
@@ -142,7 +141,7 @@ const MorningReports = () => {
         const ampm = h >= 12 ? 'PM' : 'AM';
         h = h % 12; h = h ? h : 12;
         const mm = m < 10 ? `0${m}` : `${m}`;
-        return `${String(h).padStart(2,'0')}:${mm} ${ampm}`;
+        return `${String(h).padStart(2, '0')}:${mm} ${ampm}`;
     };
 
     const formatYMD = (dt) => {
@@ -223,7 +222,12 @@ const MorningReports = () => {
 
             {/* No Data */}
             {!loading && !error && reports.length === 0 && (
-                <p className="text-center text-gray-600 font-medium py-8">No reports found.</p>
+                <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto mb-2 text-gray-400">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5" />
+                    </svg>
+                    No reports found matching your current filters.
+                </div>
             )}
 
             {/* Desktop Table */}
@@ -274,12 +278,11 @@ const MorningReports = () => {
                             {/* Time + Status */}
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-gray-500">{formatTime(report.submission_time || report.created_at || report.report_date)}</span>
-                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                                    report.compliance_status === 'OnTime' ? 'bg-green-100 text-green-700' :
-                                    report.compliance_status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
-                                    report.compliance_status === 'HUL' ? 'bg-orange-100 text-orange-700' :
-                                    'bg-red-100 text-red-700'
-                                }`}>{report.compliance_status}</span>
+                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${report.compliance_status === 'OnTime' ? 'bg-green-100 text-green-700' :
+                                        report.compliance_status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
+                                            report.compliance_status === 'HUL' ? 'bg-orange-100 text-orange-700' :
+                                                'bg-red-100 text-red-700'
+                                    }`}>{report.compliance_status}</span>
                             </div>
                         </div>
                     ))}

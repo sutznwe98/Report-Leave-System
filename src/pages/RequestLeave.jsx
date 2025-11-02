@@ -28,8 +28,23 @@ const RequestLeave = () => {
 
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
-  const validateAnnualLeave = (startDateStr, endDateStr) => {
+  const validateAnnualLeave = (startDateStr, endDateStr, joinDateStr) => {
     if (!startDateStr || !endDateStr) return '';
+
+    // New: Check for 3-month eligibility from join date
+    if (joinDateStr) {
+      const joinDate = new Date(joinDateStr);
+      const eligibilityDate = new Date(new Date(joinDate).setMonth(joinDate.getMonth() + 3));
+      const today = new Date();
+
+      if (today < eligibilityDate) {
+        return `You are not eligible for Annual Leave until 3 months after your join date. Eligibility starts on: ${eligibilityDate.toLocaleDateString()}.`;
+      }
+    } else {
+      // If join_date is not available, they are not eligible for AL.
+      return "Your join date is not set, so you are not eligible for Annual Leave.";
+    }
+
     const now = new Date();
     const start = new Date(startDateStr);
     const end = new Date(endDateStr);
@@ -49,7 +64,7 @@ const RequestLeave = () => {
 
   useEffect(() => {
     if (leaveData.leave_type === 'AL') {
-      const warn = validateAnnualLeave(leaveData.start_date, leaveData.end_date);
+      const warn = validateAnnualLeave(leaveData.start_date, leaveData.end_date, user?.join_date);
       setAlWarning(warn);
     } else {
       setAlWarning('');
@@ -80,7 +95,7 @@ const RequestLeave = () => {
     }
 
     if (leaveData.leave_type === 'AL') {
-      const warn = validateAnnualLeave(leaveData.start_date, leaveData.end_date);
+      const warn = validateAnnualLeave(leaveData.start_date, leaveData.end_date, user?.join_date);
       if (warn) {
         setMessage(warn);
         return;
@@ -138,8 +153,7 @@ const RequestLeave = () => {
               <option value="AL">Annual Leave (AL)</option>
               <option value="UPL">Unpaid Leave (UPL)</option>
               <option value="ML">Medical Leave (ML)</option>
-              <option value="HML">Half Morning Leave (HML)</option>
-              <option value="HEL">Half Evening Leave (HEL)</option>
+              <option value="HUPL">Half Unpaid Leave (HUPL)</option>
             </select>
           </div>
 
