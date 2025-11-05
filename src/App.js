@@ -7,12 +7,13 @@ import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import EmployeeDashboard from "./pages/EmployeeDashboard";
 import EmployeeManagement from "./pages/EmployeeManagement";
+import EmployeeDetailPage from "./pages/EmployeeDetailPage"; 
 import MorningReports from "./pages/MorningReports";
 import SubmitReport from "./pages/SubmitReport";
 import RequestLeave from "./pages/RequestLeave";
 import LeaveRecords from "./pages/LeaveRecords";
 import EmployeeReportList from "./pages/EmployeeReportList";
-import LeaveRequestDetail from "./pages/LeaveRequestDetail"; // ✅ Import fixed
+import LeaveRequestDetail from "./pages/LeaveRequestDetail";
 import EmployeeReportDetail from "./pages/EmployeeReportDetail";
 
 function App() {
@@ -42,12 +43,18 @@ const ProtectedRoute = ({ allowedRoles }) => {
     return <Navigate to="/login" replace />;
   }
 
+  // Determine the user's correct dashboard path for safe redirection
+  const isAdmin = userRole === "admin";
+  const userDashboardPath = isAdmin ? "/admin/dashboard" : "/employee/dashboard";
+  
+  // FIX: Instead of redirecting to the generic '/', which leads to the loop, 
+  // redirect unauthorized users directly to their designated dashboard path.
   return allowedRoles.includes(userRole) ? (
     <Layout>
       <Outlet />
     </Layout>
   ) : (
-    <Navigate to="/" replace />
+    <Navigate to={userDashboardPath} replace />
   );
 };
 
@@ -61,6 +68,12 @@ const LeaveDetailWrapper = () => {
 const EmployeeReportDetailWrapper = () => {
   const { id } = useParams();
   return <EmployeeReportDetail reportId={id} />;
+};
+
+// Wrapper for employee detail page
+const EmployeeDetailWrapper = () => {
+  const { id } = useParams();
+  return <EmployeeDetailPage />;
 };
 
 // Redirect root path based on role
@@ -78,6 +91,7 @@ const RootRedirect = () => {
   if (!userRole) return <Navigate to="/login" replace />;
 
   const isAdmin = userRole === "admin";
+  // This logic is fine, it points '/' to the correct dashboard.
   return (
     <Navigate
       to={isAdmin ? "/admin/dashboard" : "/employee/dashboard"}
@@ -99,25 +113,25 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={!(user && user.role) ? <Login /> : <Navigate to="/" />} />
+      <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
       <Route path="/" element={<RootRedirect />} />
 
       {/* Admin Routes */}
       <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
         <Route path="/admin/employees" element={<EmployeeManagement />} />
+        <Route path="/admin/employees/:id" element={<EmployeeDetailWrapper />} /> {/* ADDED THIS ROUTE */}
         <Route path="/admin/reports" element={<MorningReports />} />
         <Route path="/admin/leaves" element={<LeaveRecords />} />
         <Route path="/admin/leaves/:id" element={<LeaveDetailWrapper />} />
       </Route>
 
       {/* Employee Routes */}
-      <Route element={<ProtectedRoute allowedRoles={["employee"]} />}>
+      <Route element={<ProtectedRoute allowedRoles={["employee", "pj lead"]} />}> 
         <Route path="/employee/dashboard" element={<EmployeeDashboard />} />
         <Route path="/employee/submit-report" element={<SubmitReport />} />
         <Route path="/employee/request-leave" element={<RequestLeave />} />
         <Route path="/employee/leave-records" element={<LeaveRecords />} />
-        <Route path="/employee/leaves/:id" element={<LeaveDetailWrapper />} />
         <Route path="/employee/report-list" element={<EmployeeReportList />} />
         <Route path="/employee/report/:id" element={<EmployeeReportDetailWrapper />} />
       </Route>

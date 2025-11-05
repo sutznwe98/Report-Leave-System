@@ -1,71 +1,40 @@
-import React, { useState, useEffect, useCallback } from "react";
-import {
-  Send,
-  Calendar,
-  FileText,
-  GaugeCircle,
-  CheckSquare,
-  Clock,
-  Users,
-  XCircle,
-  Plane,
-  Briefcase,
-} from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Send, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { useAuth } from "../context/AuthContext";
 
 const API_URL = "http://localhost:5000/api";
 
-// StatCard Component
-const StatCard = ({
-  title,
-  value,
-  icon: Icon,
-  colorClass,
-  onClick,
-  description,
-}) => (
-  <div
-    className={`bg-white p-6 rounded-xl shadow-lg border-l-4 ${colorClass} transition duration-300 hover:shadow-xl hover:scale-[1.01] cursor-pointer`}
-    onClick={onClick}
-  >
-    <div className="flex items-center justify-between">
-      <p className="text-sm font-medium text-gray-500 uppercase tracking-wider">
-        {title}
-      </p>
-      <Icon
-        className={`w-6 h-6 ${colorClass
-          .replace("border-", "text-")
-          .replace("-4", "")}`}
-      />
-    </div>
-    <div className="mt-1 flex items-end justify-between">
-      <span className="text-3xl font-bold text-gray-900">{value}</span>
-      {description && <p className="text-xs text-gray-500">{description}</p>}
-    </div>
-  </div>
-);
-
 const EmployeeDashboard = () => {
   const [employeeStats, setEmployeeStats] = useState(null);
-  const [reportStats, setReportStats] = useState(null);
   const [leaves, setLeaves] = useState([]);
   const [missedReports, setMissedReports] = useState(0);
   const [morningDue, setMorningDue] = useState(false);
-  const [alertType, setAlertType] = useState(null); // 'due' or 'ful'
+  const [alertType, setAlertType] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const token = localStorage.getItem("token");
-  const user = JSON.parse(localStorage.getItem("user"));
+  const { user, token } = useAuth();
   const userId = user?.id;
-
   const navigate = useNavigate();
+  const redirectRef = useRef(false);
 
+  const formatYMD = (dt) => {
+    if (!dt) return "—";
+    const d = new Date(dt);
+    if (isNaN(d.getTime())) return "—";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  // Auto-create UPL if morning report is missed
   const createAutomaticUPL = useCallback(async () => {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
-      const newLeavePayload = {
+      const payload = {
         employee_id: userId,
         leave_type: "UPL",
         start_date: todayStr,
@@ -74,31 +43,25 @@ const EmployeeDashboard = () => {
         backup_person: "System Generated",
         status: "Approved",
       };
-
-      await axios.post(`${API_URL}/leaves`, newLeavePayload, {
+      await axios.post(`${API_URL}/leaves`, payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      // Return true to indicate success, which will trigger a refetch
       return true;
-    } catch (leaveError) {
-      // If the error is a 409 Conflict, it means the leave already exists.
-      // This is an expected outcome if the effect runs multiple times.
-      if (leaveError.response && leaveError.response.status === 409) {
-        console.log("Automatic UPL already exists for today.");
-      } else {
-        console.error("Failed to auto-create UPL:", leaveError);
-      }
+    } catch (err) {
+      if (err.response?.status === 409)
+        console.log("Automatic UPL already exists.");
+      else console.error("Failed to auto-create UPL:", err);
       return false;
     }
   }, [token, userId]);
 
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchDashboard = async () => {
+      // FIX: Removed manual navigation and redirectRef logic.
+      // Rely on the parent ProtectedRoute to handle navigation/redirection.
       if (!token || !userId) {
-        setError("Authentication required. Please login again.");
+        // If unauthenticated, stop fetching and exit. ProtectedRoute will handle redirect.
         setLoading(false);
-        navigate("/login");
         return;
       }
 
@@ -106,44 +69,39 @@ const EmployeeDashboard = () => {
       setError(null);
 
       try {
-        const reqs = [
-          axios.get(`${API_URL}/stats/employee/${userId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          axios.get(`${API_URL}/stats/employee/${userId}/reports`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          axios.get(`${API_URL}/leaves/employee/me`, {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { id: userId },
-          }),
-          axios
-            .get(`${API_URL}/reports/employee/${userId}/today`, {
+        const [employeeRes, leavesRes, myReportsRes, todayRes] =
+          await Promise.all([
+            axios.get(`${API_URL}/stats/employee/${userId}`, {
               headers: { Authorization: `Bearer ${token}` },
-            })
-            .catch((e) => ({ data: null, status: e?.response?.status || 500 })),
-          axios.get(`${API_URL}/reports/employee/me`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ];
-
-        
-        const [employeeRes, reportRes, leavesRes, todayRes, myReportsRes] =
-          await Promise.all(reqs);
+            }),
+            axios.get(`${API_URL}/leaves/employee/me`, {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { id: userId },
+            }),
+            axios.get(`${API_URL}/reports/employee/me`, {
+              headers: { Authorization: `Bearer ${token}` },
+            }),
+            axios
+              .get(`${API_URL}/reports/employee/${userId}/today`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              .catch((e) => ({
+                data: null,
+                status: e?.response?.status || 500,
+              })),
+          ]);
 
         setEmployeeStats(employeeRes.data);
-        setReportStats(reportRes.data);
-        setLeaves(Array.isArray(leavesRes.data) ? leavesRes.data : []);
+        const allLeaves = Array.isArray(leavesRes.data) ? leavesRes.data : [];
+        setLeaves(allLeaves);
 
         const reports = Array.isArray(myReportsRes.data)
           ? myReportsRes.data
           : [];
-
         const today = new Date();
         const sameLocalDate = (dt) => {
           if (!dt) return false;
           const d = new Date(dt);
-          if (isNaN(d.getTime())) return false;
           return (
             d.getFullYear() === today.getFullYear() &&
             d.getMonth() === today.getMonth() &&
@@ -151,15 +109,11 @@ const EmployeeDashboard = () => {
           );
         };
 
-        // Determine if today report exists from today endpoint
-        const hasTodayFromEndpoint = Boolean(
-          todayRes &&
-            todayRes.status === 200 &&
-            todayRes.data &&
-            (Array.isArray(todayRes.data) ? todayRes.data.length > 0 : true)
-        );
+        const hasTodayFromEndpoint =
+          todayRes?.status === 200 &&
+          todayRes.data &&
+          (Array.isArray(todayRes.data) ? todayRes.data.length > 0 : true);
 
-        // Fallback: scan full list
         const hasTodayFromList = reports.some(
           (r) =>
             sameLocalDate(r.report_date) ||
@@ -167,37 +121,28 @@ const EmployeeDashboard = () => {
             sameLocalDate(r.created_at)
         );
 
-        const isReportMissing = !(hasTodayFromEndpoint || hasTodayFromList);
-        setMorningDue(isReportMissing);
+        const reportMissing = !(hasTodayFromEndpoint || hasTodayFromList);
+        setMorningDue(reportMissing);
 
         const now = new Date();
         const hours = now.getHours();
         const minutes = now.getMinutes();
 
-        if (isReportMissing) {
-          if (hours > 12 || (hours === 12 && minutes >= 30)) { // After 12:30 PM
-            setAlertType('ful'); // Full Unpaid Leave
-          } else if (hours > 11 || (hours === 11 && minutes >= 30)) { // After 11:30 AM
-            setAlertType('due'); // Report is due
-          }
-        }
+        if (reportMissing) {
+          if (hours > 12 || (hours === 12 && minutes >= 30))
+            setAlertType("ful");
+          else if (hours > 11 || (hours === 11 && minutes >= 30))
+            setAlertType("due");
 
-        // Automatically create UPL if report is missing after 12:30 PM
-        if (
-          isReportMissing &&
-          (hours > 12 || (hours === 12 && minutes >= 30))
-        ) {
-          const alreadyHasUPL = leaves.some(
-            (leave) =>
-              leave.leave_type === "UPL" &&
-              leave.start_date.slice(0, 10) ===
-                new Date().toISOString().slice(0, 10) &&
-              leave.reason === "Automatic UPL for not submitting morning report."
-          );
-
-          if (!alreadyHasUPL) {
-            // We attempt to create it. The backend will prevent duplicates.
-            await createAutomaticUPL();
+          if (hours > 12 || (hours === 12 && minutes >= 30)) {
+            const alreadyHasUPL = allLeaves.some(
+              (l) =>
+                l.leave_type === "UPL" &&
+                l.start_date.slice(0, 10) ===
+                  today.toISOString().slice(0, 10) &&
+                l.reason === "Automatic UPL for not submitting morning report."
+            );
+            if (!alreadyHasUPL) await createAutomaticUPL();
           }
         }
 
@@ -207,28 +152,17 @@ const EmployeeDashboard = () => {
         setMissedReports(missed);
         setLoading(false);
       } catch (err) {
-        console.error(
-          "API Fetch Error:",
-          err.response?.data?.message || err.message
-        );
-        setEmployeeStats(null);
-        setReportStats(null);
+        console.error("API Fetch Error:", err);
         setError(
-          err.response?.data?.message || "Failed to fetch data. Server error."
+          err.response?.data?.message || "Failed to fetch dashboard data."
         );
         setLoading(false);
       }
     };
 
-    fetchStats();
+    fetchDashboard();
+  }, [token, userId, navigate, createAutomaticUPL]);
 
-    // The dependency array is simplified. We don't want this effect to re-run
-    // when createAutomaticUPL changes. It should only run on initial load
-    // or when the user/token changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, userId]);
-
-  // Loading Screen
   if (loading) {
     return (
       <div className="p-4 md:p-8 min-h-screen bg-gray-50 font-sans text-center">
@@ -245,7 +179,6 @@ const EmployeeDashboard = () => {
     );
   }
 
-  // Error Screen
   if (error) {
     return (
       <div className="p-4 md:p-8 min-h-screen bg-gray-50 font-sans text-center">
@@ -256,85 +189,52 @@ const EmployeeDashboard = () => {
         <p className="mt-4 text-sm text-gray-600">
           Please ensure your API server is running on{" "}
           <code className="font-mono text-gray-800">http://localhost:5000</code>
-          and the routes are correct.
         </p>
       </div>
     );
   }
 
-  const formatYMD = (dt) => {
-    if (!dt) return "—";
-    const d = new Date(dt);
-    if (isNaN(d.getTime())) return "—";
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
+  const totalAL = Number(employeeStats?.totalAL || 0);
+  const remainingAL = Number(employeeStats?.remainingAL || 0);
+  const takenAL = Math.max(0, totalAL - remainingAL);
 
   return (
     <div className="p-6 md:p-8 min-h-screen bg-gray-50 font-sans">
-      <script src="https://cdn.tailwindcss.com"></script>
-      <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap"
-        rel="stylesheet"
-      />
-      <style>{`body { font-family: 'Inter', sans-serif; }`}</style>
 
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6">
-        <h2 className="text-3xl font-extrabold text-gray-900">Dashboard</h2>
-        <div className="flex gap-2 w-full md:w-auto">
-          <button
-            onClick={() => navigate("/employee/submit-report")}
-            className={`flex-1 md:flex-initial px-4 py-2 bg-blue-600 text-white rounded-md flex items-center justify-center ${
-              morningDue && alertType === "ful"
-                ? "cursor-not-allowed bg-gray-400"
-                : "hover:bg-blue-700"
-            }`}
-            disabled={morningDue && alertType === "ful"}
-          >
-            <Send className="w-4 h-4 mr-2" /> Add Report
-          </button>
-          <button
-            onClick={() => navigate("/employee/request-leave")}
-            className="flex-1 md:flex-initial px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Add Leave
-          </button>
-        </div>
-      </div>
 
-      {morningDue && alertType === 'due' && (
+      {/* Alerts */}
+      {morningDue && alertType === "due" && (
         <div className="p-4 mb-6 border border-red-300 bg-red-50 text-red-700 rounded-md">
           <div className="font-semibold">Morning Report Due!</div>
           <div className="text-sm">
-            You have not submitted your morning report for today. Please submit
-            it as soon as possible.
+            You have not submitted your morning report. Please submit it ASAP.
+          </div>
+        </div>
+      )}
+      {morningDue && alertType === "ful" && (
+        <div className="p-4 mb-6 border border-red-400 bg-red-100 text-red-800 rounded-md">
+          <div className="font-semibold">Morning Report Past Due</div>
+          <div className="text-sm">
+            You did not submit your report on time. This will be marked as a
+            full unpaid leave.
           </div>
         </div>
       )}
 
-      {morningDue && alertType === 'ful' && (
-        <div className="p-4 mb-6 border border-red-400 bg-red-100 text-red-800 rounded-md">
-          <div className="font-semibold">Morning Report Past Due</div>
-          <div className="text-sm">You did not submit your report on time. This will be marked as a full unpaid leave.</div>
-        </div>
-      )}
-
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        {(() => {
-          const total = Number(employeeStats?.totalAL || 0);
-          const remaining = Number(employeeStats?.remainingAL || 0);
-          const taken = Math.max(0, total - remaining);
-          return (
-            <div className="bg-white p-5 rounded-lg shadow border">
-              <div className="text-sm text-gray-500">Annual Leave Taken</div>
-              <div className="text-2xl font-bold mt-1">
-                {taken} / {total}
-              </div>
-            </div>
-          );
-        })()}
+        <div className="bg-white p-5 rounded-lg shadow border">
+          <div className="text-sm text-gray-500">Total Annual Leave</div>
+          <div className="text-2xl font-bold mt-1">
+            {totalAL} Days
+          </div>
+        </div>
+        <div className="bg-white p-5 rounded-lg shadow border">
+          <div className="text-sm text-gray-500">Remaining Annual Leave</div>
+          <div className="text-2xl font-bold mt-1 text-green-600">
+            {remainingAL} Days
+          </div>
+        </div>
         <div className="bg-white p-5 rounded-lg shadow border">
           <div className="text-sm text-gray-500">Unpaid Leave</div>
           <div className="text-2xl font-bold mt-1">
@@ -361,6 +261,7 @@ const EmployeeDashboard = () => {
         </div>
       </div>
 
+      {/* Recent Leave Table */}
       <div className="bg-white rounded-lg shadow border">
         <div className="p-5 border-b">
           <div className="text-xl font-bold">Recent Leave Requests</div>
@@ -391,13 +292,6 @@ const EmployeeDashboard = () => {
                     start && end
                       ? Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1
                       : 0;
-                  const statusBadge = (
-                    <span
-                      className={`px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700`}
-                    >
-                      Pending
-                    </span>
-                  );
                   return (
                     <tr key={l.id} className="border-t text-sm">
                       <td className="px-5 py-3">
@@ -413,7 +307,11 @@ const EmployeeDashboard = () => {
                           {l.leave_type || "—"}
                         </span>
                       </td>
-                      <td className="px-5 py-3">{statusBadge}</td>
+                      <td className="px-5 py-3">
+                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700">
+                          Pending
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}
@@ -422,7 +320,7 @@ const EmployeeDashboard = () => {
               ).length === 0 && (
                 <tr>
                   <td
-                    colSpan="5"
+                    colSpan="6"
                     className="px-5 py-6 text-center text-sm text-gray-500"
                   >
                     No pending leave requests found.
@@ -432,15 +330,6 @@ const EmployeeDashboard = () => {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="md:hidden fixed bottom-4 right-4 z-10">
-        <button
-          onClick={() => navigate("/employee/submit-report")}
-          className="p-4 bg-green-600 text-white rounded-full shadow-2xl hover:bg-green-700"
-        >
-          <Send className="w-6 h-6" />
-        </button>
       </div>
     </div>
   );

@@ -33,7 +33,7 @@ const NavBar = () => {
         <h1 className="text-xl font-semibold text-gray-800">Dashboard</h1>
       </div>
       <div>
-        <span className="text-gray-600">Welcome, {user.name}</span>
+        <span className="text-gray-600">Welcome, {user.employee_name}</span>
       </div>
     </header>
   );

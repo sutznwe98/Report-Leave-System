@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 // Using lucide-react for icons (assuming it's available in the environment)
-import { List, XCircle, Loader2, ArrowRight } from "lucide-react";
+import { List, XCircle, Loader2, ArrowRight } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const API_URL = "http://localhost:5000/api";
 
@@ -11,6 +12,7 @@ const AdminDashboard = () => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { user } = useAuth();
 
   const navigate = useNavigate();
 
@@ -53,13 +55,21 @@ const AdminDashboard = () => {
           axios.get(`${API_URL}/employees`, { headers }),
         ]);
 
-        const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
+        const employeesRaw = Array.isArray(employeesRes.data)
+          ? employeesRes.data
+          : [];
         const employees = employeesRaw.map((emp) => ({
           ...emp,
           // Correctly parse the 'team' string from the DB into a 'teams' array
-          teams: (typeof emp.team === 'string'
-                ? emp.team.split(',').map((t) => t.trim()).filter(Boolean)
-                : (Array.isArray(emp.teams) ? emp.teams : [])),
+          teams:
+            typeof emp.team === "string"
+              ? emp.team
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : Array.isArray(emp.teams)
+              ? emp.teams
+              : [],
         }));
 
         const byId = new Map(employees.map((e) => [e.id, e]));
@@ -67,17 +77,25 @@ const AdminDashboard = () => {
         const byName = new Map(employees.map((e) => [e.name, e]));
 
         const enrichWithEmployee = (row) => {
-          const emp = byId.get(row.employee_id) || byEmail.get(row.employee_email) || byName.get(row.employee_name);
+          const emp =
+            byId.get(row.employee_id) ||
+            byEmail.get(row.employee_email) ||
+            byName.get(row.employee_name);
           if (!emp) return row;
           return {
             ...row,
-            employee_name: row.employee_name || emp.name || 'N/A',
-            teams: Array.isArray(row.teams) && row.teams.length ? row.teams : emp.teams || [],
+            employee_name: row.employee_name || emp.name || "N/A",
+            teams:
+              Array.isArray(row.teams) && row.teams.length
+                ? row.teams
+                : emp.teams || [],
           };
         };
 
         const leavesData = Array.isArray(leavesRes.data) ? leavesRes.data : [];
-        const reportsData = Array.isArray(reportsRes.data) ? reportsRes.data : [];
+        const reportsData = Array.isArray(reportsRes.data)
+          ? reportsRes.data
+          : [];
 
         setLeaves(leavesData.map(enrichWithEmployee));
         setReports(reportsData.map(enrichWithEmployee));
@@ -106,8 +124,8 @@ const AdminDashboard = () => {
     const d = new Date(dt);
     if (isNaN(d.getTime())) return "N/A";
     const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   };
 
@@ -130,42 +148,77 @@ const AdminDashboard = () => {
   };
 
   const todaysReports = reports
-    .filter((r) => isSameLocalDate(r.report_date) || isSameLocalDate(r.submission_time) || isSameLocalDate(r.created_at))
-    .sort((a, b) => new Date(b.submission_time || b.report_date || b.created_at) - new Date(a.submission_time || a.report_date || a.created_at));
+    .filter(
+      (r) =>
+        isSameLocalDate(r.report_date) ||
+        isSameLocalDate(r.submission_time) ||
+        isSameLocalDate(r.created_at)
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.submission_time || b.report_date || b.created_at) -
+        new Date(a.submission_time || a.report_date || a.created_at)
+    );
 
   // Determine which reports to display and what the count should be
-  const reportsToDisplay = todaysReports.length > 0 ? todaysReports : reports.slice(0, 10);
-  const pendingLeaves = leaves.filter(l => (l.status || '').toLowerCase() === 'pending');
+  const reportsToDisplay =
+    todaysReports.length > 0 ? todaysReports : reports.slice(0, 10);
+  const pendingLeaves = leaves.filter(
+    (l) => (l.status || "").toLowerCase() === "pending"
+  );
 
-
-  // Helper to determine badge colors
-  const getLeaveStatusClasses = (status) => {
+  // Updated helper to show detailed pending status
+  const getLeaveStatusBadge = (leave) => {
+    const { status, pj_lead_status } = leave;
     switch (status?.toLowerCase()) {
       case "approved":
-        return "bg-green-100 text-green-800 border-green-300";
+        return (
+          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-green-100 text-green-800 border-green-300">
+            Approved
+          </span>
+        );
       case "pending":
-        return "bg-yellow-100 text-yellow-800 border-yellow-300";
+        if (pj_lead_status?.toLowerCase() === "approved") {
+          return (
+            <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-blue-100 text-blue-800 border-blue-300">
+              Pending Admin
+            </span>
+          );
+        }
+        return (
+          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-yellow-100 text-yellow-800 border-yellow-300">
+            Pending PJL
+          </span>
+        );
       case "rejected":
-        return "bg-red-100 text-red-800 border-red-300";
+        return (
+          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-red-100 text-red-800 border-red-300">
+            Rejected
+          </span>
+        );
       default:
-        return "bg-gray-100 text-gray-800 border-gray-300";
+        return (
+          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-gray-100 text-gray-800 border-gray-300">
+            {status || "Unknown"}
+          </span>
+        );
     }
   };
 
   const getReportStatusClasses = (status) => {
-    switch ((status || '').toString()) {
-      case 'OnTime':
-        return 'bg-green-100 text-green-700 border-green-300';
-      case 'QA':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'HUL':
-        return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'UPL':
-        return 'bg-red-100 text-red-800 border-red-300';
-      case 'Late':
-        return 'bg-orange-100 text-orange-800 border-orange-300';
+    switch ((status || "").toString()) {
+      case "OnTime":
+        return "bg-green-100 text-green-700 border-green-300";
+      case "QA":
+        return "bg-yellow-100 text-yellow-800 border-yellow-300";
+      case "HUL":
+        return "bg-orange-100 text-orange-800 border-orange-300";
+      case "UPL":
+        return "bg-red-100 text-red-800 border-red-300";
+      case "Late":
+        return "bg-orange-100 text-orange-800 border-orange-300";
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-300';
+        return "bg-gray-100 text-gray-800 border-gray-300";
     }
   };
 
@@ -197,10 +250,13 @@ const AdminDashboard = () => {
       ? obj.teams
       : Array.isArray(obj?.employee_teams)
       ? obj.employee_teams
-      : (typeof obj?.team === 'string'
-        ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
-        : []);
-    return arr.length ? arr.join(', ') : 'N/A';
+      : typeof obj?.team === "string"
+      ? obj.team
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : [];
+    return arr.length ? arr.join(", ") : "N/A";
   };
 
   if (loading) {
@@ -234,8 +290,8 @@ const AdminDashboard = () => {
     <div className="min-h-screen bg-gray-50 font-sans">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         <header className="mb-10 pt-4">
-          <h1 className="text-5xl font-extrabold text-gray-900 tracking-tight">
-            Admin Dashboard
+          <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight">
+            Welcome, {user?.employee_name || user?.name || "Admin"}
           </h1>
           <div className="h-1 w-24 bg-purple-500 rounded mt-3"></div>
         </header>
@@ -289,7 +345,10 @@ const AdminDashboard = () => {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200 font-semibold">
                     {pendingLeaves.map((l) => (
-                      <tr key={l.id} className="hover:bg-gray-50 transition duration-150">
+                      <tr
+                        key={l.id}
+                        className="hover:bg-gray-50 transition duration-150"
+                      >
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {l.employee_name || "N/A"}
                         </td>
@@ -312,21 +371,14 @@ const AdminDashboard = () => {
                           {l.leave_type || "N/A"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <span
-                            className={`px-3 py-1 text-xs font-semibold rounded-full border ${getLeaveStatusClasses(
-                              l.status
-                            )}`}
-                          >
-                            {l.status || "N/A"}
-                          </span>
+                          {getLeaveStatusBadge(l)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <button
                             onClick={() => handleViewDetails(l.id)}
-                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-lg shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition duration-150 ease-in-out"
+                            className="text-indigo-600 hover:text-indigo-900 flex items-center gap-1"
                           >
-                            Details
-                            <ArrowRight className="ml-1 w-3 h-3" />
+                            View <ArrowRight className="w-4 h-4" />
                           </button>
                         </td>
                       </tr>
@@ -335,8 +387,19 @@ const AdminDashboard = () => {
                 </table>
               ) : (
                 <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto mb-2 text-gray-400">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-8 h-8 mx-auto mb-2 text-gray-400"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5"
+                    />
                   </svg>
                   No pending leave requests found.
                 </div>
@@ -356,71 +419,89 @@ const AdminDashboard = () => {
               </span>
             </div>
 
-          <div className="p-0 overflow-x-auto max-h-96">
-            {reportsToDisplay.length > 0 ? (
+            <div className="p-0 overflow-x-auto max-h-96">
+              {reportsToDisplay.length > 0 ? (
                 <>
                   {todaysReports.length === 0 && (
-                    <div className="px-6 py-3 text-xs text-gray-500">No reports for today. Showing latest 10.</div>
+                    <div className="px-6 py-3 text-xs text-gray-500">
+                      No reports for today. Showing latest 10.
+                    </div>
                   )}
                   <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Report Date
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Name
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Project
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Report
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Report Time
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/4">
-                        Compliance Status
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {reportsToDisplay.map((r) => (
-                      <tr key={r.id} className="hover:bg-gray-50 transition duration-150">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {formatYMD(r.report_date) || "N/A"}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {r.employee_name || "N/A"}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {renderTeams(r)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {summarizeReport(r.report_text)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {extractTime(r.submission_time || r.created_at || r.report_date)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <span
-                            className={`px-3 py-1 text-xs font-semibold rounded-full border ${getReportStatusClasses(
-                              r.compliance_status
-                            )}`}
-                          >
-                            {r.compliance_status || "N/A"}
-                          </span>
-                        </td>
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Report Date
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Name
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Project
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Report
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Report Time
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/4">
+                          Compliance Status
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {reportsToDisplay.map((r) => (
+                        <tr
+                          key={r.id}
+                          className="hover:bg-gray-50 transition duration-150"
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {formatYMD(r.report_date) || "N/A"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {r.employee_name || "N/A"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {renderTeams(r)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {summarizeReport(r.report_text)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {extractTime(
+                              r.submission_time || r.created_at || r.report_date
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <span
+                              className={`px-3 py-1 text-xs font-semibold rounded-full border ${getReportStatusClasses(
+                                r.compliance_status
+                              )}`}
+                            >
+                              {r.compliance_status || "N/A"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </>
               ) : (
                 <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 mx-auto mb-2 text-gray-400">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-8 h-8 mx-auto mb-2 text-gray-400"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5"
+                    />
                   </svg>
                   No compliance reports found for today.
                 </div>

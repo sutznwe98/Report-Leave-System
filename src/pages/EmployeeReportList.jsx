@@ -127,7 +127,7 @@ const EmployeeReportList = () => {
         <h2 className="text-3xl font-extrabold text-gray-900">
           My Report List
         </h2>
-        <button
+        {/* <button
           onClick={() => navigate("/employee/dashboard")}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center shadow-md"
         >
@@ -135,7 +135,7 @@ const EmployeeReportList = () => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
           </svg>
           Back to Dashboard
-        </button>
+        </button> */}
       </div>
 
       {/* Filters */}

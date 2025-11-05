@@ -18,16 +18,8 @@ const Login = () => {
             await login(email, password);
             navigate('/');
         } catch (err) {
-            console.error(err);
-            try {
-                const mockToken = 'demo-token';
-                const mockUser = { id: 1, name: 'Super Admin', email: email || 'admin@system.com', role: 'admin' };
-                localStorage.setItem('token', mockToken);
-                localStorage.setItem('user', JSON.stringify(mockUser));
-                navigate('/');
-            } catch (_) {
-                setError('Server error during login.');
-            }
+            console.error("Login failed:", err);
+            setError(err.response?.data?.message || 'Invalid credentials or server error.');
         }
     };
 
@@ -102,4 +94,3 @@ const Login = () => {
 };
 
 export default Login;
-

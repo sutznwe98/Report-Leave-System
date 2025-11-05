@@ -13,7 +13,11 @@ export const AuthProvider = ({ children }) => {
         const token = localStorage.getItem('token');
         
         if (userString) {
-            setUser(JSON.parse(userString));
+            try {
+                setUser(JSON.parse(userString));
+            } catch (e) {
+                console.error("Failed to parse user from localStorage", e);
+            }
         }
         
         // If there's a token in localStorage, set it as the default Authorization header
@@ -26,17 +30,27 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (email, password) => {
         const response = await axios.post(`${API_URL}/auth/login`, { email, password });
-        if (response.data?.user) {
-            const { user } = response.data;
+        if (response.data?.token && response.data?.user) {
+            const { token, user } = response.data;
+            // 1. Save token and user to localStorage
+            localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(user));
+            // 2. Set user state
             setUser(user);
+            // 3. Set axios default header for subsequent requests
+            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         return response;
     };
 
     const logout = () => {
+        // 1. Remove user and token from localStorage
         localStorage.removeItem('user');
+        localStorage.removeItem('token');
+        // 2. Clear user state
         setUser(null);
+        // 3. Remove the Authorization header from axios defaults
+        delete axios.defaults.headers.common['Authorization'];
     };
 
     return (
@@ -47,4 +61,3 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => useContext(AuthContext);
-
