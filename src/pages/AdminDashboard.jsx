@@ -51,7 +51,7 @@ const AdminDashboard = () => {
         const headers = { Authorization: `Bearer ${token}` };
         const [leavesRes, reportsRes, employeesRes] = await Promise.all([
           axios.get(`${API_URL}/leaves`, { headers }),
-          axios.get(`${API_URL}/reports`, { headers }),
+          axios.get(`${API_URL}/reports?include_projects=true`, { headers }),
           axios.get(`${API_URL}/employees`, { headers }),
         ]);
 
@@ -64,12 +64,12 @@ const AdminDashboard = () => {
           teams:
             typeof emp.team === "string"
               ? emp.team
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean)
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean)
               : Array.isArray(emp.teams)
-              ? emp.teams
-              : [],
+                ? emp.teams
+                : [],
         }));
 
         const byId = new Map(employees.map((e) => [e.id, e]));
@@ -85,6 +85,8 @@ const AdminDashboard = () => {
           return {
             ...row,
             employee_name: row.employee_name || emp.name || "N/A",
+            main_project: emp.project,
+            other_project: emp.other_project,
             teams:
               Array.isArray(row.teams) && row.teams.length
                 ? row.teams
@@ -103,7 +105,7 @@ const AdminDashboard = () => {
         console.error(err);
         setError(
           err.response?.data?.message ||
-            "Failed to fetch data. Check API connection."
+          "Failed to fetch data. Check API connection."
         );
       } finally {
         setLoading(false);
@@ -249,13 +251,13 @@ const AdminDashboard = () => {
     const arr = Array.isArray(obj?.teams)
       ? obj.teams
       : Array.isArray(obj?.employee_teams)
-      ? obj.employee_teams
-      : typeof obj?.team === "string"
-      ? obj.team
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [];
+        ? obj.employee_teams
+        : typeof obj?.team === "string"
+          ? obj.team
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+          : [];
     return arr.length ? arr.join(", ") : "N/A";
   };
 
@@ -288,7 +290,7 @@ const AdminDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
-      <div className="max-w-6xl mx-auto p-4 sm:p-8">
+      <div className="max-w-8xl mx-auto p-4 sm:p-8">
         <header className="mb-10 pt-4">
           <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight">
             Welcome, {user?.employee_name || user?.name || "Admin"}
@@ -312,13 +314,16 @@ const AdminDashboard = () => {
             <div className="p-0 overflow-x-auto max-h-96">
               {leaves.length > 0 ? (
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-gray-50 sticky top-0">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Name
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Project
+                        Main Project
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                        Other Projects
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Reason
@@ -330,15 +335,15 @@ const AdminDashboard = () => {
                         End Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Leave Days Count
+                        Leave Days
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Leave Type
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/4">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/6">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
@@ -353,7 +358,10 @@ const AdminDashboard = () => {
                           {l.employee_name || "N/A"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {renderTeams(l)}
+                          {l.main_project || "N/A"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {l.other_project || "N/A"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                           {l.reason || "N/A"}
@@ -428,7 +436,7 @@ const AdminDashboard = () => {
                     </div>
                   )}
                   <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-gray-50 sticky top-0">
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                           Report Date
@@ -437,7 +445,10 @@ const AdminDashboard = () => {
                           Name
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                          Project
+                          Main Project
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Other Projects
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                           Report
@@ -463,7 +474,10 @@ const AdminDashboard = () => {
                             {r.employee_name || "N/A"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {renderTeams(r)}
+                            {r.main_project || "N/A"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {r.other_project || "N/A"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                             {summarizeReport(r.report_text)}

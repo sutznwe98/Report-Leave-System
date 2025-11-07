@@ -16,10 +16,8 @@ import {
   Briefcase,
 } from "lucide-react";
 
-// The API_URL is defined here, assuming it's correctly set to "http://localhost:5000/api"
 const API_URL = "http://localhost:5000/api";
 
-// --- Updated: Leave types are now objects with label and value ---
 const LEAVE_TYPES = [
   { label: "Annual Leave (AL)", value: "AL" },
   { label: "Medical Leave (ML)", value: "ML" },
@@ -27,7 +25,6 @@ const LEAVE_TYPES = [
   { label: "Half Unpaid Leave (HUPL)", value: "HUPL" },
 ];
 
-// Helper function to format dates
 const formatDate = (dateString) => {
   if (!dateString) return "N/A";
   return new Date(dateString).toLocaleDateString("en-US", {
@@ -78,86 +75,43 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
   const [submissionMessage, setSubmissionMessage] = useState(null);
   const { user, token } = useAuth();
   const navigate = useNavigate();
-  // Status and type are managed locally for editing/action
   const [newStatus, setNewStatus] = useState("");
-  const [newLeaveType, setNewLeaveType] = useState(""); // Used for the dropdown
+  const [newLeaveType, setNewLeaveType] = useState("");
   const [imgError, setImgError] = useState(false);
 
-  // Placeholder for user identification (simulating admin context)
-  const userId = "LOCAL_ADMIN_ID_12345";
-
-  // --- New: Calculate leave duration (total requested days) ---
   const totalDays = useMemo(() => {
     if (!leave || !leave.start_date || !leave.end_date) return 0;
-
     const start = new Date(leave.start_date);
     const end = new Date(leave.end_date);
-
-    // Ensure dates are valid
     if (isNaN(start) || isNaN(end)) return 0;
-
-    // Calculate difference in milliseconds
     const diffTime = Math.abs(end.getTime() - start.getTime());
-    // Convert to days (+1 to include the start day)
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-
-    return diffDays;
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   }, [leave]);
-  // --- End Total Days Calculation ---
 
   useEffect(() => {
     const fetchLeave = async () => {
       setLoading(true);
       setError(null);
-
       try {
-        // Retrieve token for authorization
         const token = localStorage.getItem("token");
         const headers = { Authorization: `Bearer ${token}` };
-
-        const response = await axios.get(`${API_URL}/leaves/${leaveId}`, {
-          headers,
-        });
+        const response = await axios.get(`${API_URL}/leaves/${leaveId}`, { headers });
         const leaveData = response.data;
-
         let enriched = { ...leaveData };
 
         try {
-          // Fetch full employees list to allow robust matching
-          const empListRes = await axios.get(`${API_URL}/employees`, {
-            headers,
-          });
-          const employeesRaw = Array.isArray(empListRes.data)
-            ? empListRes.data
-            : [];
+          const empListRes = await axios.get(`${API_URL}/employees`, { headers });
+          const employeesRaw = Array.isArray(empListRes.data) ? empListRes.data : [];
 
-          // Normalize each employee's teams (support various fields)
           const toTeams = (obj) => {
             if (Array.isArray(obj?.teams)) return obj.teams;
             if (Array.isArray(obj?.employee_teams)) return obj.employee_teams;
             if (Array.isArray(obj?.projects)) return obj.projects;
-            if (Array.isArray(obj?.employee_projects))
-              return obj.employee_projects;
-            if (typeof obj?.team === "string")
-              return obj.team
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean);
-            if (typeof obj?.projects === "string")
-              return obj.projects
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean);
-            if (typeof obj?.project === "string")
-              return obj.project
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean);
-            if (typeof obj?.project_name === "string")
-              return obj.project_name
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean);
+            if (Array.isArray(obj?.employee_projects)) return obj.employee_projects;
+            if (typeof obj?.team === "string") return obj.team.split(",").map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.projects === "string") return obj.projects.split(",").map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.project === "string") return obj.project.split(",").map(t => t.trim()).filter(Boolean);
+            if (typeof obj?.project_name === "string") return obj.project_name.split(",").map(t => t.trim()).filter(Boolean);
             return [];
           };
 
@@ -166,39 +120,19 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
             teams: toTeams(emp),
           }));
 
-          // Build lookup maps
           const byId = new Map(employees.map((e) => [e.id, e]));
           const byEmail = new Map(employees.map((e) => [e.email, e]));
           const byName = new Map(employees.map((e) => [e.name, e]));
-
-          // Collect possible keys from leave and match with case/trim insensitivity
           const norm = (v) => (v == null ? "" : String(v).trim().toLowerCase());
 
-          const possibleIds = [
-            enriched.employee_id,
-            enriched.employeeId,
-            enriched.user_id,
-            enriched.userId,
-          ];
-          const possibleEmails = [
-            enriched.employee_email,
-            enriched.email,
-            enriched.user_email,
-          ];
-          const possibleNames = [
-            enriched.employee_name,
-            enriched.name,
-            enriched.user_name,
-            enriched.employee,
-          ];
+          const possibleIds = [enriched.employee_id, enriched.employeeId, enriched.user_id, enriched.userId];
+          const possibleEmails = [enriched.employee_email, enriched.email, enriched.user_email];
+          const possibleNames = [enriched.employee_name, enriched.name, enriched.user_name, enriched.employee];
 
           const foundId = possibleIds.find((id) => id && byId.get(id));
-
           let foundEmailKey = null;
           if (!foundId) {
-            const emailSet = new Map(
-              Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v])
-            );
+            const emailSet = new Map(Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v]));
             for (const em of possibleEmails) {
               const n = norm(em);
               if (n && emailSet.has(n)) {
@@ -210,9 +144,7 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
 
           let foundNameKey = null;
           if (!foundId && !foundEmailKey) {
-            const nameSet = new Map(
-              Array.from(byName.entries()).map(([k, v]) => [norm(k), v])
-            );
+            const nameSet = new Map(Array.from(byName.entries()).map(([k, v]) => [norm(k), v]));
             for (const nm of possibleNames) {
               const n = norm(nm);
               if (n && nameSet.has(n)) {
@@ -222,29 +154,16 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
             }
           }
 
-          const emp =
-            (foundId && byId.get(foundId)) ||
-            (foundEmailKey &&
-              Array.from(byEmail.entries())
-                .map(([k, v]) => [norm(k), v])
-                .find(([k]) => k === foundEmailKey)?.[1]) ||
-            (foundNameKey &&
-              Array.from(byName.entries())
-                .map(([k, v]) => [norm(k), v])
-                .find(([k]) => k === foundNameKey)?.[1]);
+          const emp = (foundId && byId.get(foundId)) ||
+            (foundEmailKey && Array.from(byEmail.entries()).map(([k, v]) => [norm(k), v]).find(([k]) => k === foundEmailKey)?.[1]) ||
+            (foundNameKey && Array.from(byName.entries()).map(([k, v]) => [norm(k), v]).find(([k]) => k === foundNameKey)?.[1]);
 
           if (emp) {
-            if (!enriched.employee_name)
-              enriched.employee_name = emp.name || enriched.employee_name;
-            const currentTeams = Array.isArray(enriched.teams)
-              ? enriched.teams
-              : Array.isArray(enriched.employee_teams)
-              ? enriched.employee_teams
-              : null;
-            const currentTeamString =
-              (typeof enriched.team === "string" && enriched.team.trim()) ||
-              (typeof enriched.projects === "string" &&
-                enriched.projects.trim());
+            if (!enriched.employee_name) enriched.employee_name = emp.name || enriched.employee_name;
+            const currentTeams = Array.isArray(enriched.teams) ? enriched.teams :
+              Array.isArray(enriched.employee_teams) ? enriched.employee_teams : null;
+            const currentTeamString = (typeof enriched.team === "string" && enriched.team.trim()) ||
+              (typeof enriched.projects === "string" && enriched.projects.trim());
             if (!(currentTeams && currentTeams.length) && !currentTeamString) {
               enriched.teams = emp.teams || [];
             }
@@ -253,20 +172,15 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
           // best-effort enrichment; ignore errors
         }
 
-        // Ensure teams value is consistently an array for rendering
         if (!Array.isArray(enriched.teams) || !enriched.teams.length) {
           const candidates = formatTeams(enriched);
           if (candidates && candidates !== "N/A") {
-            enriched.teams = candidates
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
+            enriched.teams = candidates.split(",").map(s => s.trim()).filter(Boolean);
           }
         }
 
         setLeave(enriched);
         setNewStatus(enriched.status);
-        // Find the matching leave type value from our new structure
         const matchedType = LEAVE_TYPES.find(
           (lt) => lt.label === enriched.leave_type || lt.value === enriched.leave_type
         );
@@ -283,7 +197,6 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
     fetchLeave();
   }, [leaveId]);
 
-  // --- Refactored: Unified function to handle all updates ---
   const handleUpdateLeave = async (updates) => {
     setIsSubmitting(true);
     setSubmissionMessage(null);
@@ -297,27 +210,28 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
   
     try {
       const token = localStorage.getItem("token");
-      const headers = { Authorization: `Bearer ${token}` };
-  
-      // The payload now includes the current state of both editable fields,
-      // plus any new updates passed into the function.
+      const headers = { 
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      // Include user role and ID in the update payload
       const payload = {
-        leave_type: newLeaveType,
-        status: newStatus,
-        ...updates, // New status or type will overwrite the existing state
+        ...updates,
+        approver_role: user.role,
+        approver_id: user.id
       };
   
       const response = await axios.put(
-        `${API_URL}/leaves/${leave.id}`, // Use the general update endpoint
+        `${API_URL}/leaves/${leave.id}`,
         payload,
         { headers }
       );
   
-      // Update local state and show success message
       const updatedLeave = response.data;
       setLeave(updatedLeave);
-      setNewStatus(response.data.status);
-      // Ensure newLeaveType is also synced with the response
+      setNewStatus(updatedLeave.status);
+      
       const matchedType = LEAVE_TYPES.find(
         (lt) => lt.label === updatedLeave.leave_type || lt.value === updatedLeave.leave_type
       );
@@ -326,28 +240,18 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
       setSubmissionMessage("Leave request successfully updated.");
   
       if (onUpdate) {
-        onUpdate(response.data); // Notify parent component of update
+        onUpdate(updatedLeave);
       }
     } catch (err) {
-      let errorMessage = "Error updating leave request. Please check console.";
-  
-      if (err.response) {
-        errorMessage = `Update failed: ${
-          err.response.data?.message || err.response.statusText
-        }`;
-      } else if (err.message && !err.message.includes("circular")) {
-        errorMessage = `Network error: ${err.message}`;
-      } else {
-        errorMessage = "An unexpected internal error occurred. Please refresh.";
-      }
-  
       console.error("Error updating leave:", err);
-      setError(errorMessage);
+      setError(
+        err.response?.data?.message || 
+        "Failed to update leave. Please try again."
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
-  // --- End of refactored function ---
 
   const handleApproveLeave = () => handleUpdateLeave({ status: "Approved" });
   const handleRejectLeave = () => handleUpdateLeave({ status: "Rejected" });
@@ -421,15 +325,15 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl overflow-hidden transform transition duration-500 hover:shadow-2xl">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 p-6  gap-3">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 p-6 gap-3">
           <h2 className="text-3xl font-extrabold text-gray-900">
             Leave Request of {leave.employee_name || "N/A"}
           </h2>
           <button
             onClick={() =>
-              user.role.toLowerCase() === "admin" // Admins go to the main leave records list
+              user.role.toLowerCase() === "admin"
                 ? navigate("/admin/leaves")
-                : navigate("/employee/leave-records") // Employees go to their personal list
+                : navigate("/employee/leave-records")
             }
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
           >
@@ -438,14 +342,12 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
-          {/* Main Details Section */}
           <div className="lg:col-span-2 p-6 sm:p-8">
             <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
               Request Information
             </h2>
 
             <div className="space-y-4">
-              {/* CHANGE: Displaying Employee Name instead of Employee ID */}
               <DetailRow
                 icon={User}
                 label="Employee Name"
@@ -474,14 +376,12 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                 label="End Date"
                 value={formatDate(leave.end_date)}
               />
-              {/* --- New: Total Days Row --- */}
               <DetailRow
                 icon={Calendar}
                 label="Total Requested Days"
                 value={`${totalDays} ${totalDays === 1 ? "day" : "days"}`}
                 isBold={true}
               />
-              {/* --- End Total Days Row --- */}
               <DetailRow
                 icon={Clock}
                 label="Requested On"
@@ -503,9 +403,8 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
             </p>
           </div>
 
-          {/* Action/History Column */}
           <div className="lg:col-span-1 p-6 sm:p-8 bg-gray-50">
-            {leave.medical_certificate_url && (
+            {leave.medical_certificate_url && leave.leave_type === 'ML' && (
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">
                   Image
@@ -562,7 +461,6 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
 
             {isPending ? (
               <div className="space-y-4">
-                {/* --- New: Leave Type Change Section --- */}
                 <div className="border p-4 rounded-lg bg-white shadow-sm space-y-3">
                   <div className="flex-1">
                     <label
@@ -587,7 +485,6 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                   </div>
                   <button
                     onClick={handleUpdateLeaveType}
-                    // Disable if submitting or if the selected type hasn't changed
                     disabled={isSubmitting || newLeaveType === leave.leave_type}
                     className={`w-full flex justify-center items-center py-2 px-3 border border-transparent rounded-lg text-sm font-semibold text-white transition duration-150 ease-in-out ${
                       isSubmitting || newLeaveType === leave.leave_type
@@ -605,7 +502,6 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                     )}
                   </button>
                 </div>
-                {/* --- End Leave Type Change Section --- */}
 
                 <p className="text-gray-600 pt-2">
                   Or select an action to process this pending request:
@@ -684,5 +580,4 @@ const DetailRow = ({
   </div>
 );
 
-// This component is the default export for the React file structure
 export default LeaveRequestDetail;

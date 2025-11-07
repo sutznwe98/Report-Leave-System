@@ -1,3 +1,4 @@
+import React, { useEffect, useState, useCallback } from "react";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
@@ -6,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 const API_URL = "http://localhost:5000/api";
 
 const LeaveRecords = () => {
-  const { user, token } = useAuth();
+  const { user, token, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [leavesAll, setLeavesAll] = useState([]);
   const [leaves, setLeaves] = useState([]);
@@ -20,9 +21,16 @@ const LeaveRecords = () => {
     leaveId: null,
   });
   const [isDeleting, setIsDeleting] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedLeave, setSelectedLeave] = useState(null);
 
-  const fetchLeavesFromServer = async () => {
-    if (!user) return;
+  const fetchLeavesFromServer = useCallback(async () => {
+    // Ensure user and token are available before proceeding
+    if (!user || !token) {
+      setLoading(false);
+      setError("Authentication token missing or user not logged in.");
+      return;
+    }
     setLoading(true);
     setError("");
 
@@ -31,14 +39,21 @@ const LeaveRecords = () => {
         user.role.toLowerCase() === "admin"
           ? `${API_URL}/leaves`
           : `${API_URL}/leaves/employee/me`;
+      console.log("Fetching from endpoint:", endpoint); // Debug log
+
+      console.log("Token:", token);
 
       const [leavesRes, employeesRes] = await Promise.all([
         axios.get(endpoint, {
-          headers: { Authorization: `Bearer ${token}` },
-          params: user.role.toLowerCase() === "admin" ? {} : { id: user.id },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache' // Prevent caching
+          },
         }),
         axios.get(`${API_URL}/employees`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
         }),
       ]);
 
@@ -50,11 +65,11 @@ const LeaveRecords = () => {
         teams: Array.isArray(emp.teams)
           ? emp.teams // if teams array already exists, use it
           : typeof emp.team === "string" // otherwise, parse the 'team' string
-          ? emp.team
+            ? emp.team
               .split(",")
               .map((t) => t.trim())
               .filter(Boolean)
-          : [],
+            : [],
       }));
 
       const byId = new Map(employees.map((e) => [e.id, e]));
@@ -114,11 +129,18 @@ const LeaveRecords = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, token, navigate]); // Dependencies for useCallback
+    };
 
   useEffect(() => {
+    if (authLoading) {
+      // Wait for authentication to complete
+      return;
+    }
     fetchLeavesFromServer();
-  }, []);
+  }, [fetchLeavesFromServer, authLoading]); // Dependency for useEffect
+    fetchLeaves();
+  }, [authLoading, user, token, navigate]); // Dependencies for useEffect
 
   const applyFilters = () => {
     let filtered = [...leavesAll];
@@ -174,16 +196,18 @@ const LeaveRecords = () => {
   //   }
   // };
 
-
- const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async () => {
     const idToDelete = confirmModal.leaveId;
 
     // CRITICAL: Robust check against the event object error
-    if (idToDelete === null || typeof idToDelete === 'object') {
-        console.error("CRITICAL ERROR: Invalid ID in modal state. Deletion aborted.", idToDelete);
-        setError("Error: Invalid record ID for deletion.");
-        closeDeleteConfirm();
-        return;
+    if (idToDelete === null || typeof idToDelete === "object") {
+      console.error(
+        "CRITICAL ERROR: Invalid ID in modal state. Deletion aborted.",
+        idToDelete
+      );
+      setError("Error: Invalid record ID for deletion.");
+      closeDeleteConfirm();
+      return;
     }
 
     setIsDeleting(true);
@@ -217,7 +241,7 @@ const LeaveRecords = () => {
     if (!dt) return "N/A";
     const d = new Date(dt);
     if (isNaN(d.getTime())) return "N/A";
-    const y = d.getFullYear(); 
+    const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
@@ -227,14 +251,24 @@ const LeaveRecords = () => {
     const arr = Array.isArray(obj?.teams)
       ? obj.teams
       : Array.isArray(obj?.employee_teams)
-      ? obj.employee_teams
-      : typeof obj?.team === "string"
-      ? obj.team
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [];
+        ? obj.employee_teams
+        : typeof obj?.team === "string"
+          ? obj.team
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+          : [];
     return arr.length ? arr.join(", ") : "N/A";
+  };
+
+  const handleOpenDetailModal = (leave) => {
+    setSelectedLeave(leave);
+    setDetailModalOpen(true);
+  };
+
+  const handleCloseDetailModal = () => {
+    setDetailModalOpen(false);
+    setSelectedLeave(null);
   };
 
   return (
@@ -339,34 +373,31 @@ const LeaveRecords = () => {
           <table className="min-w-full">
             <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
               <tr>
-                <th className="py-3 px-4 text-left">Employee</th>
-                <th className="py-3 px-4 text-left">Project</th>
-                <th className="py-3 px-4 text-left">Reason</th>
-                <th className="py-3 px-4 text-left">Start</th>
-                <th className="py-3 px-4 text-left">End</th>
-                <th className="py-3 px-4 text-left">Leave Days Count</th>
-                <th className="py-3 px-4 text-left">Status</th>
-                <th className="py-3 px-4 text-left">Action</th>
+                <th className="py-3 px-4 text-center">Start</th>
+                <th className="py-3 px-4 text-center">End</th>
+                <th className="py-3 px-4 text-center">Leave Days</th>
+                <th className="py-3 px-4 text-center">Reason</th>
+                <th className="py-3 px-4 text-center">Leave Type</th>
+                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
               {leaves.map((leave) => (
                 <tr key={leave.id} className="border-t">
-                  <td className="py-2 px-4">{leave.employee_name}</td>
-                  <td className="py-2 px-4">{renderTeams(leave)}</td>
-                  <td className="py-2 px-4">{leave.reason}</td>
                   <td className="py-2 px-4">{formatYMD(leave.start_date)}</td>
                   <td className="py-2 px-4">{formatYMD(leave.end_date)}</td>
                   <td className="py-2 px-4">{leave.total_days}</td>
+                  <td className="py-2 px-4">{leave.reason}</td>
+                  <td className="py-2 px-4">{leave.leave_type}</td>
                   <td className="py-2 px-4">
                     <span
-                      className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                        leave.status === "approved"
-                          ? "bg-green-100 text-green-700"
-                          : leave.status === "pending"
+                      className={`px-2 py-1 rounded-full text-xs font-semibold ${leave.status === "approved"
+                        ? "bg-green-100 text-green-700"
+                        : leave.status === "pending"
                           ? "bg-yellow-100 text-yellow-700"
                           : "bg-red-100 text-red-700"
-                      }`}
+                        }`}
                     >
                       {leave.status}
                     </span>
@@ -374,20 +405,22 @@ const LeaveRecords = () => {
 
                   <td className="py-2 px-4 text-center">
                     <button
-                      onClick={() => navigate(`/admin/leaves/${leave.id}`)}
+                      onClick={() => handleOpenDetailModal(leave)}
                       className="text-indigo-600 hover:text-indigo-900 transition-colors font-semibold"
                     >
                       Detail
                     </button>
-                    <button
-                      onClick={() =>
-                        setConfirmModal({ isOpen: true, leaveId: leave.id })
-                      }
-                      className="text-red-600 hover:text-red-900 transition-colors font-semibold ml-4"
-                      disabled={isDeleting}
-                    >
-                      Delete
-                    </button>
+                    {user.role.toLowerCase() === 'admin' && (
+                      <button
+                        onClick={() =>
+                          setConfirmModal({ isOpen: true, leaveId: leave.id })
+                        }
+                        className="text-red-600 hover:text-red-900 transition-colors font-semibold ml-4"
+                        disabled={isDeleting}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -418,13 +451,12 @@ const LeaveRecords = () => {
                   {formatYMD(leave.start_date)} - {formatYMD(leave.end_date)}
                 </span>
                 <span
-                  className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                    leave.status === "approved"
-                      ? "bg-green-100 text-green-700"
-                      : leave.status === "pending"
+                  className={`px-2 py-1 rounded-full text-xs font-semibold ${leave.status === "approved"
+                    ? "bg-green-100 text-green-700"
+                    : leave.status === "pending"
                       ? "bg-yellow-100 text-yellow-700"
                       : "bg-red-100 text-red-700"
-                  }`}
+                    }`}
                 >
                   {leave.status}
                 </span>
@@ -435,14 +467,12 @@ const LeaveRecords = () => {
               <p className="text-gray-700 text-sm mb-3">
                 <strong>Reason:</strong> {leave.reason}
               </p>
-              {user.role.toLowerCase() !== "admin" && (
-                <button
-                  onClick={() => navigate(`/employee/leaves/${leave.id}`)}
-                  className="mt-1 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-lg shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
-                >
-                  View Detail
-                </button>
-              )}
+              <button
+                onClick={() => handleOpenDetailModal(leave)}
+                className="mt-1 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-lg shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
+              >
+                View Detail
+              </button>
             </div>
           ))}
         </div>
@@ -470,6 +500,156 @@ const LeaveRecords = () => {
               >
                 {isDeleting ? "Deleting..." : "Delete"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {detailModalOpen && selectedLeave && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={handleCloseDetailModal}></div>
+            <div className="relative w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+              <div className="flex items-center justify-between p-6 border-b">
+                <h3 className="text-2xl font-bold text-gray-900">
+                  Leave Records Details
+                </h3>
+                <button
+                  onClick={handleCloseDetailModal}
+                  className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-500"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+                <div className="lg:col-span-2 p-6 sm:p-8">
+                  <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">
+                    Request Information
+                  </h2>
+
+                  <div className="space-y-4">
+                    {user.role.toLowerCase() === "admin" && (
+                      <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                        <div className="text-sm font-medium text-gray-600 flex items-center">
+                          <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          Employee Name
+                        </div>
+                        <div className="text-sm font-semibold text-purple-700">
+                          {selectedLeave.employee_name || "N/A"}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-600 flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        Leave Type
+                      </div>
+                      <div className="text-sm font-semibold text-gray-800">
+                        {selectedLeave.leave_type}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-600 flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        Start Date
+                      </div>
+                      <div className="text-sm text-gray-800">
+                        {formatYMD(selectedLeave.start_date)}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-600 flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        End Date
+                      </div>
+                      <div className="text-sm text-gray-800">
+                        {formatYMD(selectedLeave.end_date)}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-600 flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Total Days
+                      </div>
+                      <div className="text-sm font-semibold text-purple-700">
+                        {selectedLeave.total_days}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-600 flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Status
+                      </div>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${selectedLeave.status === "approved"
+                        ? "bg-green-100 text-green-800"
+                        : selectedLeave.status === "pending"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-red-100 text-red-800"
+                        }`}>
+                        {selectedLeave.status.charAt(0).toUpperCase() + selectedLeave.status.slice(1)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h3 className="text-lg font-semibold text-gray-800 mt-8 mb-4 border-b pb-1">
+                    Reason
+                  </h3>
+                  <p className="text-gray-700 p-4 bg-gray-50 border border-gray-200 rounded-lg shadow-inner italic">
+                    {selectedLeave.reason || "No reason provided."}
+                  </p>
+                </div>
+
+                <div className="lg:col-span-1 p-6 sm:p-8 bg-gray-50">
+                  {selectedLeave.medical_certificate_url && selectedLeave.leave_type === 'ML' && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                        Medical Certificate
+                      </h3>
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg overflow-hidden bg-white">
+                        <img
+                          src={`http://localhost:5000${selectedLeave.medical_certificate_url}`}
+                          alt="Medical Certificate"
+                          className="w-full h-auto max-h-80 object-contain p-2"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22200%22%20height%3D%22200%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23f3f4f6%22%2F%3E%3Ctext%20x%3D%22100%22%20y%3D%22100%22%20font-family%3D%22Arial%22%20font-size%3D%2214%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%3EImage%20not%20found%3C%2Ftext%3E%3C%2Fsvg%3E';
+                          }}
+                        />
+                        <div className="p-3 bg-gray-50 border-t border-gray-200 text-center">
+                          <a
+                            href={`http://localhost:5000${selectedLeave.medical_certificate_url}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-indigo-600 hover:text-indigo-800 hover:underline"
+                          >
+                            Open in new tab
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

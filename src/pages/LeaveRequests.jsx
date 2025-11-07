@@ -23,9 +23,12 @@ const LeaveRequests = () => {
       try {
         const token = adminUser?.token || localStorage.getItem('token');
         const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+
+        // Add timestamp to prevent caching
+        const timestamp = new Date().getTime();
         const [leavesRes, employeesRes] = await Promise.all([
-          axios.get(`${API_URL}/leaves`, config),
-          axios.get(`${API_URL}/employees`, config)
+          axios.get(`${API_URL}/leaves?t=${timestamp}`, config),
+          axios.get(`${API_URL}/employees?t=${timestamp}`, config)
         ]);
 
         const employeesRaw = Array.isArray(employeesRes.data) ? employeesRes.data : [];
@@ -42,18 +45,16 @@ const LeaveRequests = () => {
         const byName = new Map(employees.map(e => [e.name, e]));
 
         const enrich = (l) => {
-          const possibleIds = [l.employee_id, l.employeeId, l.user_id, l.userId];
-          const possibleEmails = [l.employee_email, l.email, l.user_email];
-          const possibleNames = [l.employee_name, l.name, l.user_name];
-          const foundId = possibleIds.find(id => id && byId.get(id));
-          const foundEmail = possibleEmails.find(em => em && byEmail.get(em));
-          const foundName = possibleNames.find(nm => nm && byName.get(nm));
-          const emp = (foundId && byId.get(foundId)) || (foundEmail && byEmail.get(foundEmail)) || (foundName && byName.get(foundName));
-          if (!emp) return l;
+          const emp = byId.get(l.employee_id) || byEmail.get(l.employee_email) || byName.get(l.employee_name) || {};
           return {
             ...l,
             employee_name: l.employee_name || emp.name || 'N/A',
             teams: Array.isArray(l.teams) && l.teams.length ? l.teams : emp.teams || [],
+            pj_approval_status: l.pj_approval_status || 'Pending',
+            admin_approval_status: l.admin_approval_status || 'Pending',
+            approved_days: l.approved_days,
+            pj_lead_comments: l.pj_lead_comments,
+            admin_comments: l.admin_comments
           };
         };
 
@@ -66,7 +67,76 @@ const LeaveRequests = () => {
     };
 
     fetchLeaves();
-  }, [adminUser]); // refetch if adminUser changes
+  }, [adminUser, fetchLeaves]); // refetch if adminUser changes
+
+  // In the handlePjLeadApprove function, let's make it more robust:
+  const handlePjLeadApprove = async (leaveId, approvedDays) => {
+    if (!leaveId || !approvedDays || approvedDays <= 0) {
+      console.error('Invalid leaveId or approvedDays');
+      return;
+    }
+
+    const currentToken = token || localStorage.getItem('token');
+    if (!currentToken) {
+      console.error('No authentication token found');
+      return;
+    }
+
+    try {
+      console.log('Making request to:', `${API_URL}/api/leaves/pj/${leaveId}`);
+      const response = await axios.patch(
+        `${API_URL}/api/leaves/pj/${leaveId}`,
+        {
+          status: 'Approved',
+          approved_leave_days: parseFloat(approvedDays),
+          approved_by_pj_lead: user?.employee_name || user?.name || 'PJ Lead',
+          pj_approval_status: 'Approved'
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentToken}`
+          }
+        }
+      );
+
+      console.log('Approval successful:', response.data);
+      // Refresh the leaves list after successful approval
+      await fetchLeaves();
+      return response.data;
+    } catch (error) {
+      console.error('Error in handlePjLeadApprove:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      throw error;
+    }
+  };
+  const handleAdminApprove = async (leaveId, approvedDays, comments = '', overridePJApproval = false) => {
+    try {
+      const token = adminUser?.token || localStorage.getItem('token');
+      await axios.patch(
+        `${API_URL}/leaves/${leaveId}/admin-approve`,
+        {
+          approved_days: approvedDays,
+          comments,
+          override_pj_approval: overridePJApproval
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      // Refresh the list
+      fetchLeaves();
+    } catch (error) {
+      console.error('Error approving leave:', error);
+      setError('Failed to approve leave');
+    }
+  };
 
   const openDeleteConfirm = (leaveId) => {
     setConfirmModal({ isOpen: true, leaveId });
@@ -94,6 +164,54 @@ const LeaveRequests = () => {
     }
   };
 
+  const columns = [
+    // ... existing columns
+    {
+      Header: 'PJ Lead Status',
+      accessor: 'pj_approval_status',
+      Cell: ({ value }) => (
+        <span className={`px-2 py-1 rounded-full text-xs ${value === 'Approved' ? 'bg-green-100 text-green-800' :
+          value === 'Rejected' ? 'bg-red-100 text-red-800' :
+            'bg-yellow-100 text-yellow-800'
+          }`}>
+          {value || 'Pending'}
+        </span>
+      )
+    },
+    {
+      Header: 'Admin Status',
+      accessor: 'admin_approval_status',
+      Cell: ({ value }) => (
+        <span className={`px-2 py-1 rounded-full text-xs ${value === 'Approved' ? 'bg-green-100 text-green-800' :
+          value === 'Rejected' ? 'bg-red-100 text-red-800' :
+            'bg-gray-100 text-gray-800'
+          }`}>
+          {value || 'Pending'}
+        </span>
+      )
+    },
+    // Add action buttons for admin
+    {
+      Header: 'Actions',
+      accessor: 'id',
+      Cell: ({ row }) => (
+        <div className="flex space-x-2">
+          <button
+            onClick={() => handleAdminApprove(row.original.id)}
+            className="text-green-600 hover:text-green-800"
+          >
+            Approve
+          </button>
+          <button
+            onClick={() => handleAdminReject(row.original.id)}
+            className="text-red-600 hover:text-red-800"
+          >
+            Reject
+          </button>
+        </div>
+      )
+    }
+  ];
 
   const handleStatusChange = async (id, status) => {
     if (!id) return;
@@ -119,17 +237,20 @@ const LeaveRequests = () => {
     }
   };
 
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case 'Approved':
-        return <span className="px-2 py-1 text-xs font-semibold leading-tight text-green-700 bg-green-100 rounded-full">Approved</span>;
-      case 'Rejected':
-        return <span className="px-2 py-1 text-xs font-semibold leading-tight text-red-700 bg-red-100 rounded-full">Rejected</span>;
-      case 'Pending':
-        return <span className="px-2 py-1 text-xs font-semibold leading-tight text-yellow-700 bg-yellow-100 rounded-full">Pending</span>;
-      default:
-        return <span className="px-2 py-1 text-xs font-semibold leading-tight text-gray-700 bg-gray-100 rounded-full">{status || 'Unknown'}</span>;
+  const getStatusBadge = (leave) => {
+    if (leave.admin_approval_status === 'Approved') {
+      return <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">Approved by Admin</span>;
     }
+    if (leave.admin_approval_status === 'Rejected') {
+      return <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs">Rejected by Admin</span>;
+    }
+    if (leave.pj_approval_status === 'Approved') {
+      return <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">Pending Admin Approval</span>;
+    }
+    if (leave.pj_approval_status === 'Rejected') {
+      return <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs">Rejected by PJ Lead</span>;
+    }
+    return <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">Pending PJ Lead Approval</span>;
   };
 
   const getTypeBadge = (type) => {
@@ -149,10 +270,10 @@ const LeaveRequests = () => {
     const arr = Array.isArray(obj?.teams)
       ? obj.teams
       : Array.isArray(obj?.employee_teams)
-      ? obj.employee_teams
-      : (typeof obj?.team === 'string'
-        ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
-        : []);
+        ? obj.employee_teams
+        : (typeof obj?.team === 'string'
+          ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
+          : []);
     return arr.length ? arr.join(', ') : 'N/A';
   };
 
@@ -217,12 +338,39 @@ const LeaveRequests = () => {
                   {leave.reason || '—'}
                   {leave.reason ===
                     "Automatic UPL for not submitting morning report." && (
-                    <span className="ml-2 px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800">
-                      Auto-Generated
-                    </span>
-                  )}
+                      <span className="ml-2 px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800">
+                        Auto-Generated
+                      </span>
+                    )}
                 </td>
-                <td className="px-5 py-4 text-sm">{getStatusBadge(leave.status)}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="space-y-1">
+                    <div className="text-sm">
+                      <span className="font-medium">PJ Lead: </span>
+                      <span className={`${leave.pj_approval_status === 'Approved' ? 'text-green-600' :
+                        leave.pj_approval_status === 'Rejected' ? 'text-red-600' :
+                          'text-yellow-600'
+                        }`}>
+                        {leave.pj_approval_status || 'Pending'}
+                      </span>
+                    </div>
+                    <div className="text-sm">
+                      <span className="font-medium">Admin: </span>
+                      <span className={`${leave.admin_approval_status === 'Approved' ? 'text-green-600' :
+                        leave.admin_approval_status === 'Rejected' ? 'text-red-600' :
+                          'text-yellow-600'
+                        }`}>
+                        {leave.admin_approval_status || 'Pending'}
+                      </span>
+                    </div>
+                    {leave.approved_days && (
+                      <div className="text-sm">
+                        <span className="font-medium">Approved Days: </span>
+                        {leave.approved_days}
+                      </div>
+                    )}
+                  </div>
+                </td>
                 <td className="px-5 py-4 text-sm">
                   {leave.status === 'Pending' ? (
                     <>
@@ -256,7 +404,7 @@ const LeaveRequests = () => {
                         Delete
                       </button>
                     </>
-                  ) : ( 
+                  ) : (
                     <span className="text-sm text-gray-500">—</span>
                   )}
                 </td>

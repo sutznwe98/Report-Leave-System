@@ -13,8 +13,10 @@ const SideBar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // This is the critical check. It ensures we correctly identify the admin role.
-  const isAdmin = user && user.role && user.role.toLowerCase() === "admin";
+  // This is the critical check. It ensures we correctly identify the admin and PJ Lead roles.
+  const userRole = user && user.role ? user.role.toLowerCase() : "";
+  const isAdmin = userRole === "admin";
+  const isPJLead = userRole === "pj lead";
 
   const handleLogout = () => {
     logout();
@@ -41,6 +43,39 @@ const SideBar = () => {
       name: "Leaves",
       path: "/admin/leaves",
       icon: <CalendarIcon className="w-5 h-5" />,
+    },
+  ];
+
+  const pjLeadLinks = [
+    {
+      name: "Dashboard",
+      path: "/pj-lead/dashboard",
+      icon: <BuildingIcon className="w-5 h-5" />,
+    },
+    {
+      name: "Leave Requests",
+      path: "/pj-lead/team-leave-requests",
+      icon: <CalendarIcon className="w-5 h-5" />,
+    },
+    {
+      name: "Submit Report",
+      path: "/pj-lead/submit-report",
+      icon: <FileTextIcon className="w-5 h-5" />,
+    },
+    {
+      name: "Request Leave",
+      path: "/pj-lead/request-leave",
+      icon: <CalendarIcon className="w-5 h-5" />,
+    },
+    {
+      name: "Leave Records",
+      path: "/pj-lead/leave-records",
+      icon: <CalendarIcon className="w-5 h-5" />,
+    },
+    {
+      name: "My Reports",
+      path: "/pj-lead/report-list",
+      icon: <UsersIcon className="w-5 h-5" />,
     },
   ];
 
@@ -72,8 +107,12 @@ const SideBar = () => {
     },
   ];
 
-  // This line uses the 'isAdmin' check to select the correct set of links.
-  const navLinks = isAdmin ? adminLinks : employeeLinks;
+  // Select the correct set of links based on user role
+  const navLinks = isAdmin 
+    ? adminLinks 
+    : isPJLead 
+    ? pjLeadLinks 
+    : employeeLinks;
 
   return (
     <aside className="flex flex-col w-64 bg-slate-900 text-slate-300">

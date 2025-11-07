@@ -17,15 +17,17 @@ const EmployeeReportList = () => {
   const [filterStatus, setFilterStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
+
   // token comes from AuthContext; fallback to localStorage for safety
   const authToken = token || localStorage.getItem("token");
 
   const fetchReports = async () => {
     if (!authToken || !user?.id) {
-        setError("Authentication required. Please log in.");
-        setLoading(false);
-        return;
+      setError("Authentication required. Please log in.");
+      setLoading(false);
+      return;
     }
 
     setLoading(true);
@@ -57,10 +59,10 @@ const EmployeeReportList = () => {
     // Added token and filters as dependencies so search runs on initial load AND filter changes
     // Removed direct call to fetchReports from buttons to rely on useEffect for consistency after state change
     if (authToken && user?.id) {
-        fetchReports();
+      fetchReports();
     } else {
-        setError("Authentication required.");
-        setLoading(false);
+      setError("Authentication required.");
+      setLoading(false);
     }
     // Added filter states to dependency array so search automatically updates on change
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -73,6 +75,16 @@ const EmployeeReportList = () => {
     setFilterToDate("");
     setFilterStatus("");
     // The fetch will be automatically triggered by the useEffect dependency array
+  };
+
+  const handleOpenModal = (report) => {
+    setSelectedReport(report);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedReport(null);
   };
 
   const getStatusStyle = (status) => {
@@ -117,11 +129,11 @@ const EmployeeReportList = () => {
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 font-sans">
-        {/* Tailwind Setup */}
-        <script src="https://cdn.tailwindcss.com"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
-        <style>{`body { font-family: 'Inter', sans-serif; }`}</style>
-        
+      {/* Tailwind Setup */}
+      <script src="https://cdn.tailwindcss.com"></script>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+      <style>{`body { font-family: 'Inter', sans-serif; }`}</style>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-3">
         <h2 className="text-3xl font-extrabold text-gray-900">
@@ -142,65 +154,65 @@ const EmployeeReportList = () => {
       <div className="bg-white p-6 rounded-xl shadow-lg mb-6">
         {/* UPDATED GRID: Changed to grid-cols-4 to fit two dates, status, and buttons */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-6">
-            
-            {/* From Date Filter */}
-            <div className="flex flex-col">
-                <label htmlFor="fromDate" className="text-sm font-medium text-gray-700 mb-1">From Date</label>
-                <input
-                    id="fromDate"
-                    type="date"
-                    value={filterFromDate}
-                    onChange={(e) => setFilterFromDate(e.target.value)}
-                    className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
-                />
-            </div>
 
-            {/* To Date Filter */}
-            <div className="flex flex-col">
-                <label htmlFor="toDate" className="text-sm font-medium text-gray-700 mb-1">To Date</label>
-                <input
-                    id="toDate"
-                    type="date"
-                    value={filterToDate}
-                    onChange={(e) => setFilterToDate(e.target.value)}
-                    className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
-                />
-            </div>
+          {/* From Date Filter */}
+          <div className="flex flex-col">
+            <label htmlFor="fromDate" className="text-base font-medium text-gray-700 mb-1">From Date</label>
+            <input
+              id="fromDate"
+              type="date"
+              value={filterFromDate}
+              onChange={(e) => setFilterFromDate(e.target.value)}
+              className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+            />
+          </div>
+
+          {/* To Date Filter */}
+          <div className="flex flex-col">
+            <label htmlFor="toDate" className="text-sm font-medium text-gray-700 mb-1">To Date</label>
+            <input
+              id="toDate"
+              type="date"
+              value={filterToDate}
+              onChange={(e) => setFilterToDate(e.target.value)}
+              className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+            />
+          </div>
 
           {/* Status Filter */}
           <div className="flex flex-col">
-             <label htmlFor="status" className="text-sm font-medium text-gray-700 mb-1">Status</label>
-             <select
-                id="status"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
-             >
-                <option value="">All Status</option>
-                <option value="OnTime">On Time</option>
-                <option value="Late">Late Report</option>
-                <option value="QA">QA Fine</option>
-                <option value="HUL">Half Unpaid Leave</option>
-                <option value="UPL">Full Unpaid Leave</option>
-             </select>
+            <label htmlFor="status" className="text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select
+              id="status"
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="border border-gray-300 rounded-lg p-3 w-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+            >
+              <option value="">All Status</option>
+              <option value="OnTime">On Time</option>
+              <option value="Late">Late Report</option>
+              <option value="QA">QA Fine</option>
+              <option value="HUL">Half Unpaid Leave</option>
+              <option value="UPL">Full Unpaid Leave</option>
+            </select>
           </div>
 
           {/* Buttons */}
           <div className="flex flex-col pt-6 md:pt-0 justify-end"> {/* Align buttons at the bottom on desktop */}
             <div className="flex gap-2 w-full">
-                <button
-                  // Fetch reports directly on click (though useEffect also handles state changes)
-                  onClick={fetchReports} 
-                  className="flex-1 bg-indigo-600 text-white rounded-lg p-3 hover:bg-indigo-700 transition font-semibold shadow-md"
-                >
-                  Search
-                </button>
-                <button
-                  onClick={handleReset}
-                  className="flex-1 bg-gray-300 text-gray-800 rounded-lg p-3 hover:bg-gray-400 transition font-semibold shadow-md"
-                >
-                  Reset
-                </button>
+              <button
+                // Fetch reports directly on click (though useEffect also handles state changes)
+                onClick={fetchReports}
+                className="flex-1 bg-indigo-600 text-white rounded-lg p-3 hover:bg-indigo-700 transition font-semibold shadow-md"
+              >
+                Search
+              </button>
+              <button
+                onClick={handleReset}
+                className="flex-1 bg-gray-300 text-gray-800 rounded-lg p-3 hover:bg-gray-400 transition font-semibold shadow-md"
+              >
+                Reset
+              </button>
             </div>
           </div>
         </div>
@@ -249,7 +261,7 @@ const EmployeeReportList = () => {
                 <tr
                   key={report.id}
                   className="hover:bg-gray-50 transition"
-                  onClick={() => navigate(`/employee/report/${report.id}`)}
+
                 >
                   <td className="p-4 font-medium">
                     {formatYMD(report.report_date)}
@@ -264,7 +276,10 @@ const EmployeeReportList = () => {
                       {report.compliance_status}
                     </span>
                   </td>
-                  <td className="p-4 text-indigo-600 font-medium cursor-pointer hover:text-indigo-800">
+                  <td
+                    onClick={() => handleOpenModal(report)}
+                    className="p-4 text-indigo-600 font-medium cursor-pointer hover:text-indigo-800"
+                  >
                     View Details
                   </td>
                 </tr>
@@ -298,12 +313,72 @@ const EmployeeReportList = () => {
                 {summarizeReport(report.report_text)}
               </p>
               <p className="text-indigo-600 text-xs font-medium mt-3 text-right">
-                  Tap to view full report &rarr;
+                Tap to view full report &rarr;
               </p>
             </div>
           ))}
         </div>
       )}
+      {/* Report Detail Modal */}
+      {isModalOpen && selectedReport && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/50 transition-opacity"
+              onClick={handleCloseModal}
+            ></div>
+            <div className="relative w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+              <div className="flex items-center justify-between p-6 border-b">
+                <h3 className="text-2xl font-bold text-gray-900">
+                  Report Details
+                </h3>
+                <button
+                  onClick={handleCloseModal}
+                  className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-500"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                    <div className="text-sm font-medium text-gray-600">Date</div>
+                    <div className="text-sm font-semibold text-gray-800">
+                      {formatYMD(selectedReport.report_date)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between py-2 border-b border-gray-100">
+                    <div className="text-sm font-medium text-gray-600">Status</div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${selectedReport.compliance_status === 'OnTime' ? 'bg-green-100 text-green-700' :
+                      selectedReport.compliance_status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
+                        selectedReport.compliance_status === 'HUL' ? 'bg-orange-100 text-orange-700' :
+                          selectedReport.compliance_status === 'UPL' ? 'bg-red-100 text-red-700' :
+                            'bg-gray-100 text-gray-700'
+                      }`}>
+                      {selectedReport.compliance_status}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-800 mb-2">Report Content</h4>
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                      <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
+                        {selectedReport.report_text || 'No content available'}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
