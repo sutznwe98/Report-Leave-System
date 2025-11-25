@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Routes, Route, Navigate, Outlet, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 
@@ -9,7 +9,7 @@ import EmployeeDashboard from "./pages/EmployeeDashboard";
 import PJLeadDashboard from "./pages/PJLeadDashboard";
 import TeamLeaveRequests from "./pages/TeamLeaveRequests";
 import EmployeeManagement from "./pages/EmployeeManagement";
-import EmployeeDetailPage from "./pages/EmployeeDetailPage"; 
+import EmployeeDetailPage from "./pages/EmployeeDetailPage";
 import MorningReports from "./pages/MorningReports";
 import SubmitReport from "./pages/SubmitReport";
 import RequestLeave from "./pages/RequestLeave";
@@ -17,6 +17,12 @@ import LeaveRecords from "./pages/LeaveRecords";
 import EmployeeReportList from "./pages/EmployeeReportList";
 import LeaveRequestDetail from "./pages/LeaveRequestDetail";
 import EmployeeReportDetail from "./pages/EmployeeReportDetail";
+import AdminEmployeeReports from "./pages/AdminEmployeeReports";
+import QAManagement from "./pages/QAManagement";
+import EmployeeQADetail from "./pages/EmployeeQADetail";
+import EmployeesBirthday from "./pages/EmployeesBirthday";
+import EmployeesAnnual from "./pages/EmployeesAnnual";
+import EmployeeLeaveCount from "./pages/EmployeeLeaveCount";
 
 function App() {
   return (
@@ -39,7 +45,7 @@ const ProtectedRoute = ({ allowedRoles }) => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  const userRole = user && user.role ? String(user.role).toLowerCase() : '';
+  const userRole = user && user.role ? String(user.role).toLowerCase() : "";
 
   if (!userRole) {
     return <Navigate to="/login" replace />;
@@ -48,13 +54,13 @@ const ProtectedRoute = ({ allowedRoles }) => {
   // Determine the user's correct dashboard path for safe redirection
   const isAdmin = userRole === "admin";
   const isPJLead = userRole === "pj lead";
-  const userDashboardPath = isAdmin 
-    ? "/admin/dashboard" 
-    : isPJLead 
-    ? "/pj-lead/dashboard" 
+  const userDashboardPath = isAdmin
+    ? "/admin/dashboard"
+    : isPJLead
+    ? "/pj-lead/dashboard"
     : "/employee/dashboard";
-  
-  // FIX: Instead of redirecting to the generic '/', which leads to the loop, 
+
+  // FIX: Instead of redirecting to the generic '/', which leads to the loop,
   // redirect unauthorized users directly to their designated dashboard path.
   return allowedRoles.includes(userRole) ? (
     <Layout>
@@ -94,7 +100,7 @@ const RootRedirect = () => {
     );
   if (!user) return <Navigate to="/login" replace />;
 
-  const userRole = user && user.role ? String(user.role).toLowerCase() : '';
+  const userRole = user && user.role ? String(user.role).toLowerCase() : "";
   if (!userRole) return <Navigate to="/login" replace />;
 
   const isAdmin = userRole === "admin";
@@ -103,10 +109,10 @@ const RootRedirect = () => {
   return (
     <Navigate
       to={
-        isAdmin 
-          ? "/admin/dashboard" 
-          : isPJLead 
-          ? "/pj-lead/dashboard" 
+        isAdmin
+          ? "/admin/dashboard"
+          : isPJLead
+          ? "/pj-lead/dashboard"
           : "/employee/dashboard"
       }
       replace
@@ -134,31 +140,53 @@ const AppRoutes = () => {
       <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
         <Route path="/admin/employees" element={<EmployeeManagement />} />
-        <Route path="/admin/employees/:id" element={<EmployeeDetailWrapper />} /> {/* ADDED THIS ROUTE */}
+        <Route
+          path="/admin/employees/:id"
+          element={<EmployeeDetailWrapper />}
+        />{" "}
+        {/* ADDED THIS ROUTE */}
         <Route path="/admin/reports" element={<MorningReports />} />
         <Route path="/admin/leaves" element={<LeaveRecords />} />
+        <Route path="/admin/employee-leave-count/:employeeName" element={<EmployeeLeaveCount />} />
+        <Route path="/admin/reports/employee/:id" element={<AdminEmployeeReports />} />
         <Route path="/admin/leaves/:id" element={<LeaveDetailWrapper />} />
+        <Route path="/admin/birthdays" element={<EmployeesBirthday />} />
+        <Route path="/admin/annual" element={<EmployeesAnnual />} />
+        <Route path="/admin/qa" element={<QAManagement />} />
+         <Route path="/admin/qa/:employeeId" element={<EmployeeQADetail />} />
       </Route>
 
       {/* Employee Routes */}
-      <Route element={<ProtectedRoute allowedRoles={["employee"]} />}> 
+      <Route element={<ProtectedRoute allowedRoles={["employee"]} />}>
         <Route path="/employee/dashboard" element={<EmployeeDashboard />} />
         <Route path="/employee/submit-report" element={<SubmitReport />} />
         <Route path="/employee/request-leave" element={<RequestLeave />} />
         <Route path="/employee/leave-records" element={<LeaveRecords />} />
         <Route path="/employee/report-list" element={<EmployeeReportList />} />
-        <Route path="/employee/report/:id" element={<EmployeeReportDetailWrapper />} />
+        <Route path="/employee/qa" element={<EmployeeQADetail />} />
+        <Route
+          path="/employee/report/:id"
+          element={<EmployeeReportDetailWrapper />}
+        />
       </Route>
 
       {/* PJ Lead Routes */}
       <Route element={<ProtectedRoute allowedRoles={["pj lead"]} />}>
         <Route path="/pj-lead/dashboard" element={<PJLeadDashboard />} />
-        <Route path="/pj-lead/team-leave-requests" element={<TeamLeaveRequests />} />
+        <Route
+          path="/pj-lead/team-leave-requests"
+          element={<TeamLeaveRequests />}
+        />
         <Route path="/pj-lead/submit-report" element={<SubmitReport />} />
         <Route path="/pj-lead/request-leave" element={<RequestLeave />} />
         <Route path="/pj-lead/leave-records" element={<LeaveRecords />} />
         <Route path="/pj-lead/report-list" element={<EmployeeReportList />} />
-        <Route path="/pj-lead/report/:id" element={<EmployeeReportDetailWrapper />} />
+        <Route path="/pj-lead/qa" element={<EmployeeQADetail />} />
+
+        <Route
+          path="/pj-lead/report/:id"
+          element={<EmployeeReportDetailWrapper />}
+        />
       </Route>
 
       {/* Fallback */}

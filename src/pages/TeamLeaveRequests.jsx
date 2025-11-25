@@ -33,19 +33,38 @@ const TeamLeaveRequests = () => {
 
     setRefreshing(true);
     try {
-      const response = await axios.get(`${API_URL}/leaves/pj-lead/updated`, {
-        headers: { Authorization: `Bearer ${currentToken}` }
-      });
+      // Try fetching both 'all' and 'updated' endpoints and merge results
+      const [allResp, updatedResp] = await Promise.all([
+        axios.get(`${API_URL}/leaves/pj-lead/all`, { headers: { Authorization: `Bearer ${currentToken}` } }).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/leaves/pj-lead/updated`, { headers: { Authorization: `Bearer ${currentToken}` } }).catch(() => ({ data: [] })),
+      ]);
 
-      // Handle the response format: { success: boolean, data: array, count: number }
-      if (response.data && response.data.success && Array.isArray(response.data.data)) {
-        setLeaves(response.data.data);
-        setError(null);
-      } else {
-        console.warn("Unexpected response format:", response.data);
-        setLeaves([]);
-        setError("Unexpected response format from server");
-      }
+      // Normalize helper to extract rows from various shapes
+      const extractRows = (resp) => {
+        if (!resp) return [];
+        const body = resp.data !== undefined ? resp.data : resp;
+        if (Array.isArray(body)) return body;
+        if (body && Array.isArray(body.data)) return body.data;
+        if (body && Array.isArray(body.rows)) return body.rows;
+        if (body && Array.isArray(body.leaves)) return body.leaves;
+        return [];
+      };
+
+      const allRows = extractRows(allResp);
+      const updatedRows = extractRows(updatedResp);
+
+      // Merge unique by id, prefer 'allRows' values then updatedRows for missing ones
+      const mapById = new Map();
+      allRows.forEach(r => { if (r && r.id !== undefined) mapById.set(String(r.id), r); });
+      updatedRows.forEach(r => { if (r && r.id !== undefined && !mapById.has(String(r.id))) mapById.set(String(r.id), r); });
+
+      let rows = Array.from(mapById.values());
+
+      // Normalize pj_lead_status values to trimmed strings for reliable filtering
+      rows = rows.map(r => ({ ...r, pj_lead_status: (r.pj_lead_status || '').toString().trim() }));
+
+      setLeaves(rows);
+      setError(null);
     } catch (err) {
       console.error("Failed to fetch updated leaves", err);
       setError(err.response?.data?.message || "Failed to fetch leave requests.");
@@ -75,13 +94,13 @@ const TeamLeaveRequests = () => {
 
   const filteredLeaves = leaves.filter((l) => {
     if (filterStatus === "all") return true;
-    if (filterStatus === "approved") return l.pj_lead_status === "Approved";
-    if (filterStatus === "rejected") return l.pj_lead_status === "Rejected";
+    const s = (l.pj_lead_status || '').toString().toLowerCase();
+    if (filterStatus === "approved") return s === 'approved';
+    if (filterStatus === "rejected") return s === 'rejected';
     return true;
   });
-
-  const approvedCount = leaves.filter((l) => l.pj_lead_status === "Approved").length;
-  const rejectedCount = leaves.filter((l) => l.pj_lead_status === "Rejected").length;
+  const approvedCount = leaves.filter((l) => (l.pj_lead_status || '').toString().toLowerCase() === 'approved').length;
+  const rejectedCount = leaves.filter((l) => (l.pj_lead_status || '').toString().toLowerCase() === 'rejected').length;
   const totalCount = leaves.length;
 
   if (loading) {
@@ -105,7 +124,7 @@ const TeamLeaveRequests = () => {
       {/* Header */}
       <div className="mb-6 flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">Leave Requests</h1>
+          <h1 className="text-3xl font-bold text-gray-800">Employees Leave Records</h1>
           <p className="text-sm text-gray-500 mt-1">
             View all updated leave requests from your team members
           </p>

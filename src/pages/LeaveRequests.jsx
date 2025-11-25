@@ -48,7 +48,7 @@ const LeaveRequests = () => {
           const emp = byId.get(l.employee_id) || byEmail.get(l.employee_email) || byName.get(l.employee_name) || {};
           return {
             ...l,
-            employee_name: l.employee_name || emp.name || 'N/A',
+            employee_name: l.employee_name || emp.name || '-',
             teams: Array.isArray(l.teams) && l.teams.length ? l.teams : emp.teams || [],
             pj_approval_status: l.pj_approval_status || 'Pending',
             admin_approval_status: l.admin_approval_status || 'Pending',
@@ -274,7 +274,7 @@ const LeaveRequests = () => {
         : (typeof obj?.team === 'string'
           ? obj.team.split(',').map(t => t.trim()).filter(Boolean)
           : []);
-    return arr.length ? arr.join(', ') : 'N/A';
+    return arr.length ? arr.join(', ') : '-';
   };
 
   return (
@@ -328,11 +328,11 @@ const LeaveRequests = () => {
           <tbody>
             {leaves.map(leave => (
               <tr key={leave.id} className="border-b border-gray-200 hover:bg-gray-100">
-                <td className="px-5 py-4 text-sm">{leave.employee_name || 'N/A'}</td>
+                <td className="px-5 py-4 text-sm">{leave.employee_name || '-'}</td>
                 <td className="px-5 py-4 text-sm">{renderTeams(leave)}</td>
                 <td className="px-5 py-4 text-sm">{getTypeBadge(leave.leave_type)}</td>
                 <td className="px-5 py-4 text-sm">
-                  {leave.start_date ? leave.start_date.slice(0, 10) : 'N/A'} to {leave.end_date ? leave.end_date.slice(0, 10) : 'N/A'}
+                  {leave.start_date ? leave.start_date.slice(0, 10) : '-'} to {leave.end_date ? leave.end_date.slice(0, 10) : '-'}
                 </td>
                 <td className="px-5 py-4 text-sm">
                   {leave.reason || '—'}

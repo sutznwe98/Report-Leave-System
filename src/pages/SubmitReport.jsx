@@ -20,6 +20,7 @@ const SubmitReport = () => {
   const [todayReport, setTodayReport] = useState(null);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
+  const [messageStatus, setMessageStatus] = useState(null); // OnTime | QA | HUL | UPL for colored success banner
   const [isEditable, setIsEditable] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -48,6 +49,17 @@ const SubmitReport = () => {
       case "HUL": return "bg-[rgb(245,174,124)]";
       case "UPL": return "bg-[rgb(237,87,87)]";
       default: return "bg-gray-400";
+    }
+  };
+
+  // Softer alert palette to match the status for the top success message
+  const getStatusAlertClasses = (status) => {
+    switch (status) {
+      case "OnTime": return "bg-emerald-100 text-emerald-800 border-emerald-300";
+      case "QA": return "bg-yellow-100 text-yellow-800 border-yellow-300";
+      case "HUL": return "bg-orange-100 text-orange-800 border-orange-300";
+      case "UPL": return "bg-red-100 text-red-800 border-red-300";
+      default: return "bg-indigo-50 text-indigo-700 border-indigo-200"; // fallback to info
     }
   };
 
@@ -105,18 +117,22 @@ const SubmitReport = () => {
         setIsEditable(false);
         setMessage("Report already submitted for today.");
         setMessageType("success");
+        setMessageStatus(response.data?.compliance_status || null);
       } catch (error) {
         if (error.response?.status === 404) {
           setTodayReport(null);
           setIsEditable(true);
           setMessage("");
+          setMessageStatus(null);
         } else if (error.response?.status === 401) {
           setMessage("Unauthorized. Please login again.");
           setMessageType("error");
+          setMessageStatus(null);
         } else {
           console.error("Error fetching today's report:", error);
           setMessage("Failed to fetch today's report. Please try again.");
           setMessageType("error");
+          setMessageStatus(null);
         }
       } finally {
         setDataLoading(false);
@@ -126,6 +142,8 @@ const SubmitReport = () => {
     if (user && user.id) checkReportAndSetState();
     else if (!authLoading) setDataLoading(false);
   }, [user, authLoading]);
+
+  // PJ lead selection removed from report submission per UX decision
 
   // -------------------- SUBMIT REPORT --------------------
   const handleSubmit = async (e) => {
@@ -167,8 +185,16 @@ const SubmitReport = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      setMessage(`Report submitted successfully. Status: ${getPotentialStatus(now).label}.`);
+      const serverStatus = response.data?.compliance_status || getPotentialStatus(now).status;
+      const statusLabel =
+        serverStatus === 'OnTime' ? 'On Time' :
+          serverStatus === 'QA' ? 'QA' :
+            serverStatus === 'HUL' ? 'Half Unpaid Leave (HUL)' :
+              'Full Unpaid Leave (UPL)';
+
+      setMessage(`Report submitted successfully. Status: ${statusLabel}.`);
       setMessageType("success");
+      setMessageStatus(serverStatus);
 
       setYesterdayTask("");
       setTodayTask("");
@@ -185,10 +211,12 @@ const SubmitReport = () => {
       } else if (status === 401) {
         setMessage("Unauthorized. Please login again.");
         setMessageType("error");
+        setMessageStatus(null);
       } else {
         console.error("Error submitting report:", error);
         setMessage("Failed to submit report. Please try again.");
         setMessageType("error");
+        setMessageStatus(null);
       }
     }
   };
@@ -280,7 +308,7 @@ const SubmitReport = () => {
 
           {/* Messages */}
           {message && (
-            <div className={`p-4 rounded-lg border-l-4 mb-8 font-medium shadow-md ${getMessageClasses(messageType)}`}>
+            <div className={`p-4 rounded-lg border mb-8 font-medium shadow-md ${messageStatus ? getStatusAlertClasses(messageStatus) : getMessageClasses(messageType)}`}>
               {message}
             </div>
           )}
@@ -337,6 +365,7 @@ const SubmitReport = () => {
                   placeholder="Any problems / blockers"
                 />
               </div>
+                {/* PJ Lead selection removed */}
               <button
                 type="submit"
                 className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg shadow hover:bg-indigo-700 transition-colors"

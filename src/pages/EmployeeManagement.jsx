@@ -8,6 +8,7 @@ import React, {
 import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import formatRole from "../utils/formatRole";
 import NrcInput from "../components/NrcInput";
 // --- Configuration ---
 const API_URL = "http://localhost:5000/api";
@@ -319,6 +320,12 @@ const EmployeeManagement = () => {
 
   const [deleteError, setDeleteError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [mainProjectFilter, setMainProjectFilter] = useState("");
+  const [positionFilter, setPositionFilter] = useState("");
+  // CSV import states
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvResult, setCsvResult] = useState(null); // {created, updated, failed, errors:[]}
+  const [csvError, setCsvError] = useState("");
 
   const roleOptions = [
     { value: "employee", label: "Employee" },
@@ -327,29 +334,57 @@ const EmployeeManagement = () => {
   ];
 
   const formatDateForDisplay = (dateString) => {
-    if (!dateString) return "N/A";
+    if (!dateString) return "-";
     try {
+      // If dateString is already in YYYY-MM-DD form, return as-is
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateString)))
+        return String(dateString);
       const date = new Date(dateString);
-      return date.toLocaleDateString("en-CA"); // YYYY-MM-DD format
+      if (isNaN(date.getTime())) return "Invalid Date";
+      // Build local date string YYYY-MM-DD to avoid timezone surprises
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     } catch (e) {
       return "Invalid Date";
     }
   };
 
   const filteredEmployees = useMemo(() => {
-    if (!searchTerm) {
-      return employees;
+    // Start from the full employee list
+    let results = employees || [];
+
+    // Apply text search (name, TMD, email, project)
+    const q = (searchTerm || "").trim().toLowerCase();
+    if (q) {
+      results = results.filter((employee) => {
+        return (
+          (employee.employee_name || "").toLowerCase().includes(q) ||
+          (employee.TMD || "").toLowerCase().includes(q) ||
+          (employee.email || "").toLowerCase().includes(q) ||
+          (employee.project || employee.main_project_name || "").toLowerCase().includes(q)
+        );
+      });
     }
-    const lowercasedFilter = searchTerm.toLowerCase();
-    return employees.filter((employee) => {
-      return (
-        (employee.employee_name || "").toLowerCase().includes(lowercasedFilter) ||
-        (employee.TMD || "").toLowerCase().includes(lowercasedFilter) ||
-        (employee.email || "").toLowerCase().includes(lowercasedFilter) ||
-        (employee.project || "").toLowerCase().includes(lowercasedFilter)
-      );
-    });
-  }, [employees, searchTerm]);
+
+    // Apply main project filter (client-side fallback)
+    const mpf = (mainProjectFilter || "").trim().toLowerCase();
+    if (mpf) {
+      results = results.filter((emp) => {
+        const mainProjectName = (emp.project || emp.main_project_name || String(emp.main_pj_id || "")).toLowerCase();
+        return mainProjectName.includes(mpf);
+      });
+    }
+
+    // Apply position filter
+    const pf = (positionFilter || "").trim().toLowerCase();
+    if (pf) {
+      results = results.filter((emp) => (emp.position || "").toLowerCase().includes(pf));
+    }
+
+    return results;
+  }, [employees, searchTerm, mainProjectFilter, positionFilter]);
 
   const fetchEmployees = useCallback(async () => {
     setError("");
@@ -360,9 +395,14 @@ const EmployeeManagement = () => {
     }
 
     try {
+      // Build query parameters
+      const params = new URLSearchParams();
+      if (mainProjectFilter) params.append("main_project", mainProjectFilter);
+      if (positionFilter) params.append("position", positionFilter);
+
       // Fetch both employees and projects
       const [employeesRes, projectsRes] = await Promise.all([
-        axios.get(`${API_URL}/employees`),
+        axios.get(`${API_URL}/employees?${params.toString()}`),
         axios.get(`${API_URL}/projects`), // Assuming you have a /api/projects endpoint
       ]);
 
@@ -381,8 +421,8 @@ const EmployeeManagement = () => {
         try {
           localStorage.removeItem("token");
           localStorage.removeItem("user");
-        } catch (_) { }
-        navigate('/login');
+        } catch (_) {}
+        navigate("/login");
         return;
       }
       setError(`Failed to fetch employees. ${err.message}`);
@@ -536,14 +576,14 @@ const EmployeeManagement = () => {
     };
     init();
   }, [isAuthenticated, fetchEmployees]);
-  
-    // This effect runs *after* isAuthenticated changes to true post-login
-    useEffect(() => {
-      if (isAuthenticated) {
-        console.log("Authentication successful, fetching employees...");
-        fetchEmployees();
-      }
-    }, [isAuthenticated, fetchEmployees]);
+
+  // This effect runs *after* isAuthenticated changes to true post-login
+  useEffect(() => {
+    if (isAuthenticated) {
+      console.log("Authentication successful, fetching employees...");
+      fetchEmployees();
+    }
+  }, [isAuthenticated, fetchEmployees]);
 
   // --- Selection ---
   const handleSelectOne = (id, checked) =>
@@ -577,8 +617,17 @@ const EmployeeManagement = () => {
     // Helper to format date strings (like '2023-10-27T17:00:00.000Z') to 'YYYY-MM-DD' for the input
     const formatDateForInput = (dateString) => {
       if (!dateString) return "";
+      const s = String(dateString).trim();
+      // If already ISO date (YYYY-MM-DD), use it directly to avoid timezone shifts
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
       try {
-        return new Date(dateString).toISOString().split("T")[0];
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return "";
+        // Use local date components so the input shows the correct calendar day
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
       } catch (e) {
         return "";
       }
@@ -808,6 +857,96 @@ const EmployeeManagement = () => {
         </button>
       </div>
 
+      {/* Import Panel (CSV or Excel) */}
+      <div className="mt-4 bg-white p-4 rounded-lg shadow border border-gray-200 space-y-3">
+        <h2 className="text-lg font-semibold text-gray-800">
+          Import Employees (CSV or Excel)
+        </h2>
+        <p className="text-xs text-gray-500">
+          Upload a CSV or Excel (.xlsx/.xls) with columns:
+          employee_name,email,password,role,position,main_pj_id (or main_pj),
+          joined_date, other_projects, ...
+        </p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setCsvError("");
+            setCsvResult(null);
+            const fileInput = e.target.elements.csvFile;
+            if (!fileInput.files.length) {
+              setCsvError("Please choose a CSV or Excel file first.");
+              return;
+            }
+            const file = fileInput.files[0];
+            const formDataFile = new FormData();
+            formDataFile.append("file", file);
+            setCsvImporting(true);
+            try {
+              const token = localStorage.getItem("token");
+              const res = await axios.post(
+                `${API_URL}/employees/import`,
+                formDataFile,
+                {
+                  headers: { Authorization: `Bearer ${token}` },
+                }
+              );
+              setCsvResult(res.data);
+              // Refresh list after import
+              fetchEmployees();
+            } catch (err) {
+              console.error("CSV import failed", err);
+              setCsvError(
+                err.response?.data?.message || err.message || "Import failed"
+              );
+            } finally {
+              setCsvImporting(false);
+            }
+          }}
+          className="flex flex-col sm:flex-row items-start sm:items-end gap-3"
+        >
+          <input
+            type="file"
+            name="csvFile"
+            accept=".csv,.xlsx,.xls"
+            className="border border-gray-300 rounded p-2 w-full sm:w-auto"
+            disabled={csvImporting}
+          />
+          <button
+            type="submit"
+            disabled={csvImporting}
+            className="px-5 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 disabled:opacity-50"
+          >
+            {csvImporting ? "Importing..." : "Import"}
+          </button>
+        </form>
+        {csvError && <div className="text-sm text-red-600">{csvError}</div>}
+        {csvResult && (
+          <div className="text-sm text-gray-700 space-y-1">
+            <div>
+              <span className="font-semibold">Created:</span>{" "}
+              {csvResult.created} |{" "}
+              <span className="font-semibold">Updated:</span>{" "}
+              {csvResult.updated} |{" "}
+              <span className="font-semibold">Failed:</span> {csvResult.failed}
+            </div>
+            {csvResult.errors && csvResult.errors.length > 0 && (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-indigo-600">
+                  Show Errors ({csvResult.errors.length})
+                </summary>
+                <ul className="list-disc ml-6 mt-1 space-y-1">
+                  {csvResult.errors.map((er, i) => (
+                    <li key={i}>
+                      Line {er.line}: {er.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* --- Main Alerts --- */}
       {error && (
         <div
@@ -827,891 +966,944 @@ const EmployeeManagement = () => {
           <span className="block sm:inline">{successMessage}</span>
         </div>
       )}
-
       {/* --- Filter Input --- */}
-      <div className="my-4">
-        <input
-          type="text"
-          placeholder="Filter by name, TMD, email, or main project..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-        />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        <div className="col-span-1">
+          <input
+            type="text"
+            placeholder="Search by name, TMD, email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && fetchEmployees()}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+        <div className="col-span-1">
+          <input
+            type="text"
+            placeholder="Filter by main project..."
+            value={mainProjectFilter}
+            onChange={(e) => setMainProjectFilter(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && fetchEmployees()}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+        <div className="col-span-1">
+          <input
+            type="text"
+            placeholder="Filter by position..."
+            value={positionFilter}
+            onChange={(e) => setPositionFilter(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && fetchEmployees()}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+        <div className="col-span-2 flex gap-2 items-end">
+          <button
+            onClick={() => {
+              fetchEmployees();
+            }}
+            className="flex-1 bg-indigo-600 text-white rounded-lg p-2 hover:bg-indigo-700 transition"
+          >
+            Search
+          </button>
+          <button
+            onClick={() => {
+              setMainProjectFilter("");
+              setPositionFilter("");
+              setSearchTerm("");
+              fetchEmployees();
+            }}
+            className="flex-1 bg-red-600 text-white rounded-lg p-2 hover:bg-red-700 transition"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       {/* --- Table --- */}
-      <div className="overflow-x-auto bg-white rounded-xl shadow-lg">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
-            <tr>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                No.
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                TMD
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Employee Name
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Role
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Position
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Main Project
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Other Projects
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                WFH/Office
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Joined Date
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Marital Status
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                NRC No
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Probation Salary
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                After Probation Salary
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Real Birth Date
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Birth Date on NRC
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                KBZ Bank Acc
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Bank
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Bank Acc
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Email
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Contact No
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Parents Contact No
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Current Address
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Address
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Contract Date
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
-              >
-                Contract By
-              </th>
-              <th
-                scope="col"
-                className="sticky top-0 right-0 px-6 py-3 text-center text-xs font-bold text-gray-600 uppercase tracking-wider bg-gray-100 z-20"
-              >
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
-            {filteredEmployees.length > 0 ? (
-              filteredEmployees.map((emp, index) => (
-                <tr
-                  key={emp.id}
-                  className="group hover:bg-gray-50 transition-colors"
+        <div className="overflow-x-auto bg-white rounded-xl shadow-lg">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
+              <tr>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
                 >
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {index + 1}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.TMD || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    <Link
-                      to={`/admin/employees/${emp.id}`}
-                      className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                  No.
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  TMD
+                </th>
+                <th
+                  scope="col"
+                  className="sticky left-0 px-6 py-3 text-center bg-gray-100 z-30 w-48 border-r border-gray-200"
+                  style={{ minWidth: "12rem" }}
+                >
+                  Employee Name
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Role
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Position
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Main Project
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Other Projects
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  WFH/Office
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Joined Date
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Marital Status
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  NRC No
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Probation Salary
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  After Probation Salary
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Real Birth Date
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Birth Date on NRC
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  KBZ Bank Acc
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Bank
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Bank Acc
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Email
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Contact No
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Parents Contact No
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Current Address
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Address
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Contract Date
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 px-6 py-3 text-center bg-gray-100 z-10"
+                >
+                  Contract By
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 right-0 px-6 py-3 text-center text-xs font-bold text-gray-600 uppercase tracking-wider bg-gray-100 z-20"
+                >
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
+              {filteredEmployees.length > 0 ? (
+                filteredEmployees.map((emp, index) => (
+                  <tr
+                    key={emp.id}
+                    className="group hover:bg-gray-50 text-center transition-colors"
+                  >
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {index + 1}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.TMD || "-"}
+                    </td>
+                    <td
+                      className="sticky left-0 px-6 py-4 text-center bg-white whitespace-nowrap text-sm font-medium text-gray-900 z-30 w-48 border-r border-gray-100"
+                      style={{ minWidth: "12rem" }}
                     >
-                      {emp.employee_name || "N/A"}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm capitalize">
-                    {emp.role || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.position || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.project || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.other_project || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.wfh_office || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDateForDisplay(emp.joined_date)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.marital_status || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.nrc_no || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.probation_period || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.after_probation || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDateForDisplay(emp.real_birth_date)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDateForDisplay(emp.birth_date_on_nrc)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.kbz_bank_account || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.bank || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.bank_acc || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.email || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.contact_no || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.parents_contact_no || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm truncate max-w-xs">
-                    {emp.current_address || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm truncate max-w-xs">
-                    {emp.address || "N/A"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDateForDisplay(emp.contract_date)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {emp.contract_by || "N/A"}
-                  </td>
-                  <td className="sticky right-0 px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-3 bg-white group-hover:bg-gray-50">
-                    <button
-                      onClick={() => handleOpenEditModal(emp)}
-                      className="text-indigo-600 hover:text-indigo-900 transition-colors"
-                    >
-                      Edit
-                    </button>
-                    {String(emp.role || "").toLowerCase() !== "admin" && (
-                      <button
-                        onClick={() => openDeleteConfirm(emp)}
-                        className="text-red-600 hover:text-red-900 transition-colors"
+                      <Link
+                        to={`/admin/employees/${emp.id}`}
+                        className="text-indigo-600 hover:text-indigo-800 hover:underline"
                       >
-                        Delete
+                        {emp.employee_name || "-"}
+                      </Link>
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {formatRole(emp.role)}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.position || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.project || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.other_project || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.wfh_office || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {formatDateForDisplay(emp.joined_date)}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.marital_status || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.nrc_no || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.probation_period || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.after_probation || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {formatDateForDisplay(emp.real_birth_date)}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {formatDateForDisplay(emp.birth_date_on_nrc)}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.kbz_bank_account || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.bank || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.bank_acc || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.email || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center  whitespace-nowrap text-sm">
+                      {emp.contact_no || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center  whitespace-nowrap text-sm">
+                      {emp.parents_contact_no || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm truncate max-w-xs">
+                      {emp.current_address || "-"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm truncate max-w-xs">
+                      {emp.address || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {formatDateForDisplay(emp.contract_date)}
+                    </td>
+                    <td className="px-6 py-4 text-center whitespace-nowrap text-sm">
+                      {emp.contract_by || "-"}
+                    </td>
+                    <td className="sticky right-0 px-6 py-4 text-center whitespace-nowrap text-sm font-medium text-center space-x-3 bg-white group-hover:bg-gray-50">
+                      <button
+                        onClick={() => handleOpenEditModal(emp)}
+                        className="text-indigo-600 hover:text-indigo-900 transition-colors"
+                      >
+                        Edit
                       </button>
-                    )}
+                      {String(emp.role || "").toLowerCase() !== "admin" && (
+                        <button
+                          onClick={() => openDeleteConfirm(emp)}
+                          className="text-red-600 hover:text-red-900 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td
+                    colSpan="28"
+                    className="px-6 py-12 text-center text-gray-500"
+                  >
+                    {isLoading
+                      ? "Loading..."
+                      : "No employees found. Try adjusting your filter."}
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td
-                  colSpan="28"
-                  className="px-6 py-12 text-center text-gray-500"
-                >
-                  {isLoading
-                    ? "Loading..."
-                    : "No employees found. Try adjusting your filter."}
-                </td>
-              </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {isModalOpen && (
+          <Modal
+            title={isEditMode ? "Edit Employee" : "Add Employee"}
+            onClose={handleCloseModal}
+          >
+            {/* Display API error at the top of the modal content */}
+            {formApiError && (
+              <div
+                className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-5"
+                role="alert"
+              >
+                <strong className="font-bold">Error: </strong>
+                <span className="block sm:inline">{formApiError}</span>
+              </div>
             )}
-          </tbody>
-        </table>
-      </div>
 
-      {isModalOpen && (
-        <Modal
-          title={isEditMode ? "Edit Employee" : "Add Employee"}
-          onClose={handleCloseModal}
-        >
-          {/* Display API error at the top of the modal content */}
-          {formApiError && (
-            <div
-              className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-5"
-              role="alert"
-            >
-              <strong className="font-bold">Error: </strong>
-              <span className="block sm:inline">{formApiError}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleFormSubmit} className="space-y-5" noValidate>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Employee Name
-              </label>
-              <input
-                type="text"
-                name="employee_name"
-                placeholder="Full Name"
-                value={formData.employee_name || formData.name}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                name="email"
-                placeholder="Email Address"
-                value={formData.email || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                required
-                autoComplete="off"
-                maxLength={254}
-              />
-            </div>
-
-            {/* --- PASSWORD FIELD: Uses type="text" in Edit Mode --- */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Password
-                {isEditMode && (
-                  <span className="text-xs text-gray-500 ml-1">
-                    (Leave blank to keep current)
-                  </span>
-                )}
-              </label>
-              <div className="relative">
+            <form onSubmit={handleFormSubmit} className="space-y-5" noValidate>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Employee Name
+                </label>
                 <input
-                  type={showPassword ? "text" : "password"}
-                  name="password"
-                  placeholder={
-                    isEditMode ? "Enter new password" : "Required Password"
-                  }
-                  value={formData.password}
+                  type="text"
+                  name="employee_name"
+                  placeholder="Full Name"
+                  value={formData.employee_name || formData.name}
                   onChange={handleInputChange}
-                  className="w-full border-gray-300 px-3 py-2 pr-10 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                  required={!isEditMode}
-                  autoComplete="new-password"
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                  required
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700"
-                >
-                  {showPassword ? (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7 1.274-4.057 5.064-7 9.542-7 .847 0 1.67.127 2.452.364m1.028 1.028A9.952 9.952 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.05 10.05 0 01-2.452 4.364m-1.028-1.028L12 12m-2.125-2.125L6.175 6.175m11.65 11.65L12 12"
-                      />
-                    </svg>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="Email Address"
+                  value={formData.email || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                  required
+                  autoComplete="off"
+                  maxLength={254}
+                />
+              </div>
+
+              {/* --- PASSWORD FIELD: Uses type="text" in Edit Mode --- */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Password
+                  {isEditMode && (
+                    <span className="text-xs text-gray-500 ml-1">
+                      (Leave blank to keep current)
+                    </span>
                   )}
-                </button>
-              </div>
-            </div>
-            {/* --- END PASSWORD FIELD --- */}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Position
-              </label>
-              <input
-                type="text"
-                name="position"
-                placeholder="Job Title (e.g., Developer)"
-                value={formData.position || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Join Date
-              </label>
-              <input
-                type="date"
-                name="joined_date"
-                value={formData.joined_date || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Birthday
-              </label>
-              <input
-                type="date"
-                name="real_birth_date"
-                value={formData.real_birth_date || formData.birthday || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            {/* All new fields */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Contact No
-              </label>
-              <input
-                type="text"
-                name="contact_no"
-                value={formData.contact_no || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                WFH/Office
-              </label>
-              <SingleSelectDropdown
-                options={[
-                  { value: "WFH", label: "Work From Home" },
-                  { value: "Office", label: "Office" },
-                ]}
-                selectedValue={formData.wfh_office}
-                onSelect={(value) =>
-                  setFormData((prev) => ({ ...prev, wfh_office: value }))
-                }
-                placeholder="Select status..."
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Marital Status
-              </label>
-              <input
-                type="text"
-                name="marital_status"
-                value={formData.marital_status || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-
-            <NrcInput
-              value={formData.nrc_no}
-              onChange={(nrc) =>
-                setFormData((prev) => ({ ...prev, nrc_no: nrc }))
-              }
-            />
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Probation Period Salary
-              </label>
-              <input
-                type="number"
-                name="probation_period"
-                value={
-                  formData.probation_period === null ||
-                  formData.probation_period === undefined
-                    ? ""
-                    : formData.probation_period
-                }
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                After Probation Salary
-              </label>
-              <input
-                type="number"
-                name="after_probation"
-                value={
-                  formData.after_probation === null ||
-                  formData.after_probation === undefined
-                    ? ""
-                    : formData.after_probation
-                }
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Birth Date on NRC
-              </label>
-              <input
-                type="date"
-                name="birth_date_on_nrc"
-                value={formData.birth_date_on_nrc || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                KBZ Bank Account
-              </label>
-              <input
-                type="text"
-                name="kbz_bank_account"
-                value={formData.kbz_bank_account || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Other Bank Name
-              </label>
-              <input
-                type="text"
-                name="bank"
-                value={formData.bank || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Other Bank Account
-              </label>
-              <input
-                type="text"
-                name="bank_acc"
-                value={formData.bank_acc || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Parents' Contact No
-              </label>
-              <input
-                type="text"
-                name="parents_contact_no"
-                value={formData.parents_contact_no || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Current Address
-              </label>
-              <textarea
-                name="current_address"
-                value={formData.current_address || ""}
-                onChange={handleInputChange}
-                rows="2"
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              ></textarea>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Permanent Address (from NRC)
-              </label>
-              <textarea
-                name="address"
-                value={formData.address || ""}
-                onChange={handleInputChange}
-                rows="2"
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              ></textarea>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Contract Date
-              </label>
-              <input
-                type="date"
-                name="contract_date"
-                value={formData.contract_date || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Contract By
-              </label>
-              <input
-                type="text"
-                name="contract_by"
-                value={formData.contract_by || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-              />
-            </div>
-
-            {/* Fields that are calculated or less frequently edited, can be hidden or removed if not needed */}
-            <div className="hidden">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Joined Month
-              </label>
-              <input
-                type="text"
-                name="joined_month"
-                value={formData.joined_month || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-                placeholder="e.g., January"
-              />
-            </div>
-            <div className="hidden">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Birthday Month
-              </label>
-              <input
-                type="text"
-                name="birthday_month"
-                value={formData.birthday_month || ""}
-                onChange={handleInputChange}
-                className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
-                placeholder="e.g., January"
-              />
-            </div>
-
-            {/* --- Main Project Configuration --- */}
-            <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
-              <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                Main Project Configuration
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Main Project
-                  </label>
-                  <SingleSelectDropdown
-                    options={DEFAULT_TEAMS.map((p) => ({ value: p, label: p }))}
-                    selectedValue={formData.main_pj_id}
-                    onSelect={(value) =>
-                      setFormData((prev) => ({ ...prev, main_pj_id: value }))
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    name="password"
+                    placeholder={
+                      isEditMode ? "Enter new password" : "Required Password"
                     }
-                    placeholder="Select a main project..."
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    className="w-full border-gray-300 px-3 py-2 pr-10 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                    required={!isEditMode}
+                    autoComplete="new-password"
                   />
-                  {/* Display the selected project name if available */}
-                </div>
-
-                {/* --- Role Selection --- */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Role
-                  </label>
-                  <SingleSelectDropdown
-                    options={roleOptions}
-                    selectedValue={formData.role}
-                    onSelect={(value) =>
-                      setFormData((prev) => ({ ...prev, role: value }))
-                    }
-                    placeholder="Select a role..."
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700"
+                  >
+                    {showPassword ? (
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7 1.274-4.057 5.064-7 9.542-7 .847 0 1.67.127 2.452.364m1.028 1.028A9.952 9.952 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.05 10.05 0 01-2.452 4.364m-1.028-1.028L12 12m-2.125-2.125L6.175 6.175m11.65 11.65L12 12"
+                        />
+                      </svg>
+                    )}
+                  </button>
                 </div>
               </div>
-            </div>
+              {/* --- END PASSWORD FIELD --- */}
 
-            {/* --- Other Projects Section --- */}
-            <div className="bg-indigo-50 p-4 rounded-lg shadow-inner">
-              <h3 className="text-lg font-bold text-indigo-700 mb-4">
-                Other Project Assignments
-              </h3>
-
-              {/* Checkbox list of existing projects */}
-              <div className="mb-6">
-                <p className="text-sm font-semibold text-gray-800 mb-2">
-                  Select Existing Other Projects:
-                </p>
-                {allProjects.filter((p) => !DEFAULT_TEAMS.includes(p.label))
-                  .length === 0 ? (
-                  <p className="text-xs italic text-gray-500">
-                    No available projects found.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
-                    {allProjects
-                      .filter((p) => !DEFAULT_TEAMS.includes(p.label))
-                      .map((project) => {
-                        const isAssigned = (
-                          formData.project_assignments || []
-                        ).some((p) => p.project_id === project.value);
-                        return (
-                          <label
-                            key={project.value}
-                            className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${
-                              isAssigned
-                                ? "bg-indigo-200 border border-indigo-500 shadow-md"
-                                : "bg-white border border-gray-300 hover:bg-indigo-50"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isAssigned}
-                              onChange={() =>
-                                handleProjectCheckboxChange(project)
-                              }
-                              className="form-checkbox h-4 w-4 text-indigo-600 rounded focus:ring-indigo-500"
-                            />
-                            <span className="text-sm font-medium text-gray-800">
-                              {project.label}
-                            </span>
-                          </label>
-                        );
-                      })}
-                  </div>
-                )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Position
+                </label>
+                <input
+                  type="text"
+                  name="position"
+                  placeholder="Job Title (e.g., Developer)"
+                  value={formData.position || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                />
               </div>
 
-              {/* Manual Input for Project ID (or Name) and Position */}
-              <form onSubmit={handleAddOtherProject} className="space-y-4">
-                <div className="space-y-4">
-                  <p className="text-sm font-semibold text-gray-800 mb-2 border-t pt-4 border-indigo-200">
-                    Manually Add Project Assignment:
-                  </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Join Date
+                </label>
+                <input
+                  type="date"
+                  name="joined_date"
+                  value={formData.joined_date || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
 
-                  <div className="flex items-start space-x-2">
-                    {/* Manual Project ID/Name Input */}
-                    <input
-                      type="text"
-                      name="id"
-                      placeholder="Project ID or Name (e.g., manual-999)"
-                      value={otherProjectInput.id}
-                      onChange={(e) => {
-                        handleOtherProjectInputChange(e);
-                        setTeamCreationError("");
-                      }}
-                      className="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-3"
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Birthday
+                </label>
+                <input
+                  type="date"
+                  name="real_birth_date"
+                  value={formData.real_birth_date || formData.birthday || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* All new fields */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contact No
+                </label>
+                <input
+                  type="text"
+                  name="contact_no"
+                  value={formData.contact_no || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  WFH/Office
+                </label>
+                <SingleSelectDropdown
+                  options={[
+                    { value: "WFH", label: "Work From Home" },
+                    { value: "Office", label: "Office" },
+                  ]}
+                  selectedValue={formData.wfh_office}
+                  onSelect={(value) =>
+                    setFormData((prev) => ({ ...prev, wfh_office: value }))
+                  }
+                  placeholder="Select status..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Marital Status
+                </label>
+                <input
+                  type="text"
+                  name="marital_status"
+                  value={formData.marital_status || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+
+              <NrcInput
+                value={formData.nrc_no}
+                onChange={(nrc) =>
+                  setFormData((prev) => ({ ...prev, nrc_no: nrc }))
+                }
+              />
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Probation Period Salary
+                </label>
+                <input
+                  type="number"
+                  name="probation_period"
+                  value={
+                    formData.probation_period === null ||
+                    formData.probation_period === undefined
+                      ? ""
+                      : formData.probation_period
+                  }
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  After Probation Salary
+                </label>
+                <input
+                  type="number"
+                  name="after_probation"
+                  value={
+                    formData.after_probation === null ||
+                    formData.after_probation === undefined
+                      ? ""
+                      : formData.after_probation
+                  }
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Birth Date on NRC
+                </label>
+                <input
+                  type="date"
+                  name="birth_date_on_nrc"
+                  value={formData.birth_date_on_nrc || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  KBZ Bank Account
+                </label>
+                <input
+                  type="text"
+                  name="kbz_bank_account"
+                  value={formData.kbz_bank_account || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Other Bank Name
+                </label>
+                <input
+                  type="text"
+                  name="bank"
+                  value={formData.bank || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Other Bank Account
+                </label>
+                <input
+                  type="text"
+                  name="bank_acc"
+                  value={formData.bank_acc || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Parents' Contact No
+                </label>
+                <input
+                  type="text"
+                  name="parents_contact_no"
+                  value={formData.parents_contact_no || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Current Address
+                </label>
+                <textarea
+                  name="current_address"
+                  value={formData.current_address || ""}
+                  onChange={handleInputChange}
+                  rows="2"
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                ></textarea>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Permanent Address (from NRC)
+                </label>
+                <textarea
+                  name="address"
+                  value={formData.address || ""}
+                  onChange={handleInputChange}
+                  rows="2"
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                ></textarea>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contract Date
+                </label>
+                <input
+                  type="date"
+                  name="contract_date"
+                  value={formData.contract_date || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contract By
+                </label>
+                <input
+                  type="text"
+                  name="contract_by"
+                  value={formData.contract_by || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                />
+              </div>
+
+              {/* Fields that are calculated or less frequently edited, can be hidden or removed if not needed */}
+              <div className="hidden">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Joined Month
+                </label>
+                <input
+                  type="text"
+                  name="joined_month"
+                  value={formData.joined_month || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                  placeholder="e.g., January"
+                />
+              </div>
+              <div className="hidden">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Birthday Month
+                </label>
+                <input
+                  type="text"
+                  name="birthday_month"
+                  value={formData.birthday_month || ""}
+                  onChange={handleInputChange}
+                  className="w-full border-gray-300 px-3 py-2 rounded-lg shadow-sm"
+                  placeholder="e.g., January"
+                />
+              </div>
+
+              {/* --- Main Project Configuration --- */}
+              <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                  Main Project Configuration
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Main Project
+                    </label>
+                    <SingleSelectDropdown
+                      options={DEFAULT_TEAMS.map((p) => ({
+                        value: p,
+                        label: p,
+                      }))}
+                      selectedValue={formData.main_pj_id}
+                      onSelect={(value) =>
+                        setFormData((prev) => ({ ...prev, main_pj_id: value }))
+                      }
+                      placeholder="Select a main project..."
                     />
-
-                    <button
-                      type="button"
-                      onClick={handleAddOtherProject}
-                      className="px-4 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                      disabled={!otherProjectInput.id}
-                    >
-                      Add
-                    </button>
+                    {/* Display the selected project name if available */}
                   </div>
 
-                  {teamCreationError && (
-                    <div className="text-red-600 text-sm mt-1">
-                      {teamCreationError}
+                  {/* --- Role Selection --- */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Role
+                    </label>
+                    <SingleSelectDropdown
+                      options={roleOptions}
+                      selectedValue={formData.role}
+                      onSelect={(value) =>
+                        setFormData((prev) => ({ ...prev, role: value }))
+                      }
+                      placeholder="Select a role..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* --- Other Projects Section --- */}
+              <div className="bg-indigo-50 p-4 rounded-lg shadow-inner">
+                <h3 className="text-lg font-bold text-indigo-700 mb-4">
+                  Other Project Assignments
+                </h3>
+
+                {/* Checkbox list of existing projects */}
+                <div className="mb-6">
+                  <p className="text-sm font-semibold text-gray-800 mb-2">
+                    Select Existing Other Projects:
+                  </p>
+                  {allProjects.filter((p) => !DEFAULT_TEAMS.includes(p.label))
+                    .length === 0 ? (
+                    <p className="text-xs italic text-gray-500">
+                      No available projects found.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                      {allProjects
+                        .filter((p) => !DEFAULT_TEAMS.includes(p.label))
+                        .map((project) => {
+                          const isAssigned = (
+                            formData.project_assignments || []
+                          ).some((p) => p.project_id === project.value);
+                          return (
+                            <label
+                              key={project.value}
+                              className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                                isAssigned
+                                  ? "bg-indigo-200 border border-indigo-500 shadow-md"
+                                  : "bg-white border border-gray-300 hover:bg-indigo-50"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isAssigned}
+                                onChange={() =>
+                                  handleProjectCheckboxChange(project)
+                                }
+                                className="form-checkbox h-4 w-4 text-indigo-600 rounded focus:ring-indigo-500"
+                              />
+                              <span className="text-sm font-medium text-gray-800">
+                                {project.label}
+                              </span>
+                            </label>
+                          );
+                        })}
                     </div>
                   )}
                 </div>
-              </form>
 
-              {/* Display Assigned Other Projects */}
-              <div className="mt-6 p-4 bg-white rounded-lg border border-indigo-100">
-                <p className="text-sm font-bold text-gray-700 mb-2">
-                  Current Assignments:
-                </p>
-                {formData.project_assignments &&
-                formData.project_assignments.length > 0 ? (
-                  <div className="space-y-2">
-                    {formData.project_assignments.map((pj) => (
-                      <div
-                        key={pj.project_id} // Use project_id as key
-                        className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center bg-gray-50 p-3 rounded-lg border border-gray-200"
+                {/* Manual Input for Project ID (or Name) and Position */}
+                <form onSubmit={handleAddOtherProject} className="space-y-4">
+                  <div className="space-y-4">
+                    <p className="text-sm font-semibold text-gray-800 mb-2 border-t pt-4 border-indigo-200">
+                      Manually Add Project Assignment:
+                    </p>
+
+                    <div className="flex items-start space-x-2">
+                      {/* Manual Project ID/Name Input */}
+                      <input
+                        type="text"
+                        name="id"
+                        placeholder="Project ID or Name (e.g., manual-999)"
+                        value={otherProjectInput.id}
+                        onChange={(e) => {
+                          handleOtherProjectInputChange(e);
+                          setTeamCreationError("");
+                        }}
+                        className="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-3"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={handleAddOtherProject}
+                        className="px-4 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                        disabled={!otherProjectInput.id}
                       >
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-gray-800 font-medium">
-                            {pj.project_name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleRemoveOtherProject(pj.project_id)
-                            }
-                            className="text-red-500 hover:text-red-700 transition-colors text-xs font-semibold ml-4"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                        <div>
-                          <SingleSelectDropdown
-                            options={roleOptions}
-                            selectedValue={pj.position_on_project}
-                            onSelect={(newValue) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                project_assignments:
-                                  prev.project_assignments.map((a) =>
-                                    a.project_id === pj.project_id
-                                      ? { ...a, position_on_project: newValue }
-                                      : a
-                                  ),
-                              }))
-                            }
-                            placeholder="Set Position..."
-                          />
-                        </div>
+                        Add
+                      </button>
+                    </div>
+
+                    {teamCreationError && (
+                      <div className="text-red-600 text-sm mt-1">
+                        {teamCreationError}
                       </div>
-                    ))}
+                    )}
                   </div>
-                ) : (
-                  <p className="text-sm text-gray-500 text-center italic">
-                    No other projects assigned.
+                </form>
+
+                {/* Display Assigned Other Projects */}
+                <div className="mt-6 p-4 bg-white rounded-lg border border-indigo-100">
+                  <p className="text-sm font-bold text-gray-700 mb-2">
+                    Current Assignments:
                   </p>
-                )}
+                  {formData.project_assignments &&
+                  formData.project_assignments.length > 0 ? (
+                    <div className="space-y-2">
+                      {formData.project_assignments.map((pj) => (
+                        <div
+                          key={pj.project_id} // Use project_id as key
+                          className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center bg-gray-50 p-3 rounded-lg border border-gray-200"
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-gray-800 font-medium">
+                              {pj.project_name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRemoveOtherProject(pj.project_id)
+                              }
+                              className="text-red-500 hover:text-red-700 transition-colors text-xs font-semibold ml-4"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div>
+                            <SingleSelectDropdown
+                              options={roleOptions}
+                              selectedValue={pj.position_on_project}
+                              onSelect={(newValue) =>
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  project_assignments:
+                                    prev.project_assignments.map((a) =>
+                                      a.project_id === pj.project_id
+                                        ? {
+                                            ...a,
+                                            position_on_project: newValue,
+                                          }
+                                        : a
+                                    ),
+                                }))
+                              }
+                              placeholder="Set Position..."
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 text-center italic">
+                      No other projects assigned.
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* --- Submit Button --- */}
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={
-                  isSubmitting || !formData.employee_name || !formData.email
-                }
-                className="w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting
-                  ? "Submitting..."
-                  : isEditMode
-                  ? "Save Changes"
-                  : "Create Employee"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+              {/* --- Submit Button --- */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={
+                    isSubmitting || !formData.employee_name || !formData.email
+                  }
+                  className="w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting
+                    ? "Submitting..."
+                    : isEditMode
+                    ? "Save Changes"
+                    : "Create Employee"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
 
-      {confirmModal.isOpen && (
-        <ConfirmModal
-          title={`Delete ${confirmModal.employeeName}?`}
-          message="Are you sure you want to delete this employee? This action cannot be undone."
-          isSubmitting={isSubmitting}
-          onConfirm={handleDeleteEmployee}
-          onCancel={closeDeleteConfirm}
-        />
-      )}
+        {confirmModal.isOpen && (
+          <ConfirmModal
+            title={`Delete ${confirmModal.employeeName}?`}
+            message="Are you sure you want to delete this employee? This action cannot be undone."
+            isSubmitting={isSubmitting}
+            onConfirm={handleDeleteEmployee}
+            onCancel={closeDeleteConfirm}
+          />
+        )}
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { ArrowLeft, User, Mail, Phone, Briefcase, Calendar, Home, DollarSign, FileText, Banknote, Building2 } from 'lucide-react';
+import formatRole from '../utils/formatRole';
 
 const API_URL = "http://localhost:5000/api";
 
@@ -12,7 +13,7 @@ const DetailRow = ({ icon: Icon, label, value }) => (
       {label}
     </dt>
     <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 font-semibold">
-      {value || 'N/A'}
+      {value || '-'}
     </dd>
   </div>
 );
@@ -53,20 +54,12 @@ const EmployeeDetailPage = () => {
   }
 
   const formatDate = (dateString) => {
-    if (!dateString) return "N/A";
+    if (!dateString) return "-";
     return new Date(dateString).toLocaleDateString('en-CA'); // YYYY-MM-DD
   };
 
-  const getRoleLabel = (roleValue) => {
-    if (!roleValue) return 'N/A';
-    const roleMap = {
-      'pj lead': 'Project Lead',
-      'employee': 'Employee',
-      'admin': 'Admin'
-    };
-    // Return the mapped label, or capitalize the original value as a fallback
-    return roleMap[roleValue.toLowerCase()] || roleValue.charAt(0).toUpperCase() + roleValue.slice(1);
-  };
+  // Use centralized formatRole helper for consistent display
+  const getRoleLabel = (roleValue) => formatRole(roleValue);
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto">
@@ -114,7 +107,7 @@ const EmployeeDetailPage = () => {
                 <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 font-semibold">
                   {(employee.project_assignments && employee.project_assignments.length > 0) ? (
                     employee.project_assignments.map(p => `${p.project_name} (${getRoleLabel(p.position_on_project)})`).join(', ')
-                  ) : 'N/A'}
+                  ) : '-'}
                 </dd>
               </div>
               <DetailRow icon={Calendar} label="Joined Date" value={formatDate(employee.joined_date)} />

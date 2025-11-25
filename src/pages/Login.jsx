@@ -14,13 +14,16 @@ const Login = () => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        try {
-            await login(email, password);
-            navigate('/');
-        } catch (err) {
-            console.error("Login failed:", err);
-            setError(err.response?.data?.message || 'Invalid credentials or server error.');
+        // Use the login() result object instead of relying on thrown errors
+        const result = await login(email, password);
+        if (!result || result.success === false) {
+            console.error('Login failed:', result);
+            const message = result?.error || result?.message || 'Your account was not found. Please contact HR to create an account.';
+            setError(message);
+            return;
         }
+
+        navigate('/');
     };
 
     return (

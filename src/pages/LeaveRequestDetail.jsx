@@ -39,32 +39,32 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
     const arr = Array.isArray(obj?.teams)
       ? obj.teams
       : Array.isArray(obj?.employee_teams)
-      ? obj.employee_teams
-      : Array.isArray(obj?.projects)
-      ? obj.projects
-      : Array.isArray(obj?.employee_projects)
-      ? obj.employee_projects
-      : typeof obj?.team === "string"
-      ? obj.team
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : typeof obj?.projects === "string"
-      ? obj.projects
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : typeof obj?.project === "string"
-      ? obj.project
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : typeof obj?.project_name === "string"
-      ? obj.project_name
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [];
+        ? obj.employee_teams
+        : Array.isArray(obj?.projects)
+          ? obj.projects
+          : Array.isArray(obj?.employee_projects)
+            ? obj.employee_projects
+            : typeof obj?.team === "string"
+              ? obj.team
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean)
+              : typeof obj?.projects === "string"
+                ? obj.projects
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+                : typeof obj?.project === "string"
+                  ? obj.project
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                  : typeof obj?.project_name === "string"
+                    ? obj.project_name
+                      .split(",")
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                    : [];
     return arr.length ? arr.join(", ") : "N/A";
   };
 
@@ -95,7 +95,7 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
       try {
         const token = localStorage.getItem("token");
         const headers = { Authorization: `Bearer ${token}` };
-        const response = await axios.get(`${API_URL}/leaves/${leaveId}`, { headers });
+        const response = await axios.get(`${API_URL}/leaves/employee/${leaveId}`, { headers });
         const leaveData = response.data;
         let enriched = { ...leaveData };
 
@@ -201,51 +201,52 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
     setIsSubmitting(true);
     setSubmissionMessage(null);
     setError(null);
-  
+
     if (!leave || !leave.id) {
       setError("Cannot process request: Leave details are missing.");
       setIsSubmitting(false);
       return;
     }
-  
+
     try {
       const token = localStorage.getItem("token");
-      const headers = { 
+      const headers = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       };
 
-      // Include user role and ID in the update payload
-      const payload = {
-        ...updates,
-        approver_role: user.role,
-        approver_id: user.id
-      };
-  
       const response = await axios.put(
         `${API_URL}/leaves/${leave.id}`,
-        payload,
+        {
+          ...updates,
+          approver_role: user.role,
+          approver_id: user.id
+        },
         { headers }
       );
-  
-      const updatedLeave = response.data;
-      setLeave(updatedLeave);
-      setNewStatus(updatedLeave.status);
-      
-      const matchedType = LEAVE_TYPES.find(
-        (lt) => lt.label === updatedLeave.leave_type || lt.value === updatedLeave.leave_type
-      );
-      setNewLeaveType(matchedType ? matchedType.value : updatedLeave.leave_type);
-  
-      setSubmissionMessage("Leave request successfully updated.");
-  
+
+      // Preserve the existing employee and project data while updating with new data
+      setLeave(prev => ({
+        ...prev, // Keep existing data
+        ...response.data, // Update with new data
+        employee_name: response.data.employee_name || prev.employee_name, // Preserve employee name
+        // Preserve project information
+        project: response.data.project || prev.project,
+        projects: response.data.projects || prev.projects,
+        employee_projects: response.data.employee_projects || prev.employee_projects
+      }));
+
+      setNewStatus(response.data.status);
+
+      setSubmissionMessage(`Leave request ${updates.status.toLowerCase()} successfully.`);
+
       if (onUpdate) {
-        onUpdate(updatedLeave);
+        onUpdate(response.data);
       }
-    } catch (err) {
-      console.error("Error updating leave:", err);
+    } catch (error) {
+      console.error("Error updating leave:", error);
       setError(
-        err.response?.data?.message || 
+        error.response?.data?.message ||
         "Failed to update leave. Please try again."
       );
     } finally {
@@ -253,43 +254,134 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
     }
   };
 
-  const handleApproveLeave = () => handleUpdateLeave({ status: "Approved" });
-  const handleRejectLeave = () => handleUpdateLeave({ status: "Rejected" });
-  const handleUpdateLeaveType = () => handleUpdateLeave({ leave_type: newLeaveType });
+  const handleApproveLeave = () => {
+    if (user.role.toLowerCase() === 'pj lead' && leave.status === 'Pending') { // If overall status is 'Pending', PJ Lead needs to approve
+      return handleUpdateLeave({
+        status: 'Approved', // PJ Lead approves their step
+      });
+    } else if (user.role.toLowerCase() === 'admin' && leave.status === 'Pending Admin Approval') { // If overall status is 'Pending Admin Approval', Admin needs to approve
+      return handleUpdateLeave({
+        status: 'Approved', // Admin approves their step
+      });
+    }
+    // Fallback for other scenarios or direct approval if status is not specific
+    return handleUpdateLeave({ status: 'Approved' });
+  };
 
-  const renderStatus = (status) => {
-    switch (status) {
-      case "Pending":
-        return (
-          <span className="inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full bg-yellow-100 text-yellow-800">
-            <AlertTriangle className="w-4 h-4 mr-1" />
-            {status}
-          </span>
-        );
-      case "Approved":
-        return (
-          <span className="inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">
-            <CheckCircle className="w-4 h-4 mr-1" />
-            {status}
-          </span>
-        );
-      case "Rejected":
-        return (
-          <span className="inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full bg-red-100 text-red-800">
-            <XCircle className="w-4 h-4 mr-1" />
-            {status}
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full bg-gray-100 text-gray-800">
-            {status}
-          </span>
-        );
+  const handleRejectLeave = () => {
+    if (user.role.toLowerCase() === 'pj lead' && leave.status === 'Pending') { // If overall status is 'Pending', PJ Lead can reject
+      return handleUpdateLeave({
+        status: 'Rejected', // PJ Lead rejects their step
+      });
+    } else if (user.role.toLowerCase() === 'admin' && leave.status === 'Pending Admin Approval') { // If overall status is 'Pending Admin Approval', Admin can reject
+      return handleUpdateLeave({
+        status: 'Rejected', // Admin rejects their step
+      });
+    }
+    // Fallback for other scenarios or direct rejection
+    return handleUpdateLeave({ status: 'Rejected' });
+  };
+
+  //const handleUpdateLeaveType = () => handleUpdateLeave({ leave_type: newLeaveType });
+  const handleUpdateLeaveType = async () => {
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem("token");
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      const payload = { leave_type: newLeaveType };
+      if (leave.employee_name) payload.employee_name = leave.employee_name;
+      if (leave.project) payload.project = leave.project;
+
+      const response = await axios.put(
+        `${API_URL}/leaves/${leave.id}`,
+        payload,
+        { headers }
+      );
+
+      // Update the local state with the updated leave data
+      setLeave(prev => ({
+        ...prev,
+        ...response.data,
+        employee_name: prev.employee_name,
+      project: prev.project
+      }));
+
+      const matchedType = LEAVE_TYPES.find(
+        (lt) => lt.label === response.data.leave_type || lt.value === response.data.leave_type
+      );
+      setNewLeaveType(matchedType ? matchedType.value : response.data.leave_type);
+
+      setSubmissionMessage("Leave type updated successfully.");
+
+      if (onUpdate) {
+        onUpdate(response.data);
+      }
+    } catch (error) {
+      console.error("Error updating leave type:", error);
+      setError(
+        error.response?.data?.message ||
+        "Failed to update leave type. Please try again."
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const isPending = leave?.status === "Pending";
+  const renderStatus = (status) => {
+    const statusConfig = {
+      'Pending PJ Lead Approval': {
+        bg: 'bg-yellow-100', // This is the overall status "Pending"
+        text: 'text-yellow-800', // This is the overall status "Pending"
+        icon: <AlertTriangle className="w-4 h-4 mr-1" />,
+        label: 'Pending PJ Lead Approval'
+      },
+      'Pending Admin Approval': {
+        bg: 'bg-blue-100', // This is the overall status "Pending Admin Approval"
+        text: 'text-blue-800', // This is the overall status "Pending Admin Approval"
+        icon: <Clock className="w-4 h-4 mr-1" />,
+        label: 'Pending Admin Approval'
+      },
+      'Approved': {
+        bg: 'bg-green-100', // This is the overall status "Approved"
+        text: 'text-green-800', // This is the overall status "Approved"
+        icon: <CheckCircle className="w-4 h-4 mr-1" />,
+        label: 'Approved'
+      },
+      'Rejected by PJ Lead': {
+        bg: 'bg-red-100', // This is the overall status "Rejected by PJ Lead"
+        text: 'text-red-800', // This is the overall status "Rejected by PJ Lead"
+        icon: <XCircle className="w-4 h-4 mr-1" />,
+        label: 'Rejected by PJ Lead'
+      },
+      'Rejected by Admin': {
+        bg: 'bg-red-100', // This is the overall status "Rejected by Admin"
+        text: 'text-red-800', // This is the overall status "Rejected by Admin"
+        icon: <XCircle className="w-4 h-4 mr-1" />,
+        label: 'Rejected by Admin'
+      },
+      default: {
+        bg: 'bg-gray-100',
+        text: 'text-gray-800',
+        icon: null,
+        label: status || 'Unknown'
+      }
+    };
+
+    const { bg, text, icon, label } = statusConfig[status] || statusConfig.default;
+
+    return (
+      <span className={`inline-flex items-center px-3 py-1 text-sm font-semibold rounded-full ${bg} ${text}`}>
+        {icon}
+        {label}
+      </span>
+    );
+  };
+
+  const isPending = leave?.status?.includes('Pending'); // This checks for "Pending" and "Pending Admin Approval"
 
   if (loading) {
     return (
@@ -393,6 +485,7 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                 value={renderStatus(leave.status)}
                 isComponent={true}
               />
+              {/*  */}
             </div>
 
             <h3 className="text-xl font-semibold text-gray-800 mt-8 mb-4 border-b pb-1">
@@ -404,37 +497,33 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
           </div>
 
           <div className="lg:col-span-1 p-6 sm:p-8 bg-gray-50">
-            {leave.medical_certificate_url && leave.leave_type === 'ML' && (
+            {leave.medical_certificate_url && (
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                  Image
+                  Medical Certificate
                 </h3>
-                {(() => {
-                  const raw = leave.medical_certificate_url || "";
-                  const url = raw.replace("0.0.0.0", "localhost");
-                  const isPdf = /\.pdf(\?|$)/i.test(url);
-                  if (isPdf) {
-                    return (
-                      <div className="border rounded-lg overflow-hidden bg-white">
-                        <iframe
-                          src={url}
-                          title="Medical Certificate PDF"
-                          className="w-full h-80"
-                        />
-                      </div>
-                    );
-                  }
-                  return (
-                    <img
-                      src={url}
-                      alt="Medical Certificate"
-                      className="w-full rounded-lg border shadow"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  );
-                })()}
+                <div className="border rounded-lg overflow-hidden bg-white">
+                  <img
+                    src={`http://localhost:5000${leave.medical_certificate_url}`}
+                    alt="Medical Certificate"
+                    className="w-full h-auto max-h-80 object-contain p-2"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22200%22%20height%3D%22200%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23f3f4f6%22%2F%3E%3Ctext%20x%3D%22100%22%20y%3D%22100%22%20font-family%3D%22Arial%22%20font-size%3D%2214%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%3EImage%20not%20found%3C%2Ftext%3E%3C%2Fsvg%3E';
+                      e.target.alt = 'Medical certificate not found';
+                    }}
+                  />
+                  <div className="p-3 bg-gray-50 border-t border-gray-200 text-center">
+                    <a
+                      href={`http://localhost:5000${leave.medical_certificate_url}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-indigo-600 hover:text-indigo-800 hover:underline"
+                    >
+                      Open in new tab
+                    </a>
+                  </div>
+                </div>
               </div>
             )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
@@ -443,11 +532,10 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
 
             {submissionMessage && (
               <div
-                className={`p-3 mb-4 rounded-lg text-sm font-medium ${
-                  submissionMessage.includes("successfully")
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
-                }`}
+                className={`p-3 mb-4 rounded-lg text-sm font-medium ${submissionMessage.includes("successfully")
+                  ? "bg-green-100 text-green-800"
+                  : "bg-red-100 text-red-800"
+                  }`}
               >
                 {submissionMessage}
               </div>
@@ -486,11 +574,10 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                   <button
                     onClick={handleUpdateLeaveType}
                     disabled={isSubmitting || newLeaveType === leave.leave_type}
-                    className={`w-full flex justify-center items-center py-2 px-3 border border-transparent rounded-lg text-sm font-semibold text-white transition duration-150 ease-in-out ${
-                      isSubmitting || newLeaveType === leave.leave_type
-                        ? "bg-purple-300 cursor-not-allowed"
-                        : "bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-purple-500"
-                    }`}
+                    className={`w-full flex justify-center items-center py-2 px-3 border border-transparent rounded-lg text-sm font-semibold text-white transition duration-150 ease-in-out ${isSubmitting || newLeaveType === leave.leave_type
+                      ? "bg-purple-300 cursor-not-allowed"
+                      : "bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-purple-500"
+                      }`}
                   >
                     {isSubmitting ? (
                       <>
@@ -510,11 +597,10 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                 <button
                   onClick={handleApproveLeave}
                   disabled={isSubmitting}
-                  className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-semibold text-white transition duration-150 ease-in-out ${
-                    isSubmitting
-                      ? "bg-green-400 cursor-not-allowed"
-                      : "bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  }`}
+                  className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-semibold text-white transition duration-150 ease-in-out ${isSubmitting
+                    ? "bg-green-400 cursor-not-allowed"
+                    : "bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    }`}
                 >
                   {isSubmitting ? (
                     <>
@@ -529,11 +615,10 @@ const LeaveRequestDetail = ({ leaveId, onUpdate }) => {
                 <button
                   onClick={handleRejectLeave}
                   disabled={isSubmitting}
-                  className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-semibold text-white transition duration-150 ease-in-out ${
-                    isSubmitting
-                      ? "bg-red-400 cursor-not-allowed"
-                      : "bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  }`}
+                  className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-semibold text-white transition duration-150 ease-in-out ${isSubmitting
+                    ? "bg-red-400 cursor-not-allowed"
+                    : "bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    }`}
                 >
                   {isSubmitting ? (
                     <>
@@ -571,9 +656,8 @@ const DetailRow = ({
       {Icon && <Icon className="w-4 h-4 mr-2 text-purple-500" />} {label}
     </div>
     <div
-      className={`text-sm text-gray-800 ${
-        isBold ? "font-bold text-purple-700" : ""
-      }`}
+      className={`text-sm text-gray-800 ${isBold ? "font-bold text-purple-700" : ""
+        }`}
     >
       {isComponent ? value : String(value)}
     </div>

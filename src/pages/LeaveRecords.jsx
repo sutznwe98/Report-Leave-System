@@ -1,18 +1,61 @@
 import React, { useEffect, useState, useCallback } from "react";
-import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
+// Simple CSV download helper (no external dependency)
+const downloadCSV = (rows, filename = 'export.csv') => {
+  if (!rows || !rows.length) return;
+  const keys = Object.keys(rows[0]);
+  const csv = [
+    keys.join(','),
+    ...rows.map(r => keys.map(k => {
+      const v = r[k] ?? '';
+      const s = String(v).replace(/"/g, '""');
+      return `"${s}"`;
+    }).join(','))
+  ].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
 const API_URL = "http://localhost:5000/api";
+
+// Filename helpers
+const sanitizeFilename = (name) => {
+  if (!name) return '';
+  return name
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 200);
+};
+
+const monthLabelFromDate = (dateStr) => {
+  try {
+    const d = dateStr ? new Date(dateStr) : new Date();
+    if (isNaN(d.getTime())) return new Date().toLocaleString('default', { month: 'short' });
+    return d.toLocaleString('default', { month: 'short' });
+  } catch { return new Date().toLocaleString('default', { month: 'short' }); }
+};
 
 const LeaveRecords = () => {
   const { user, token, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [leavesAll, setLeavesAll] = useState([]);
   const [leaves, setLeaves] = useState([]);
+  const [leaveCounts, setLeaveCounts] = useState({ total: 0, upl: 0, al: 0, remainingAL: null, totalAL: null, totalLeaveDays: 0 });
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterPJ, setFilterPJ] = useState("");
+  const [filterEmployee, setFilterEmployee] = useState("");
+  const [selectedEmployeeName, setSelectedEmployeeName] = useState("");
   const [error, setError] = useState("");
   const [filterFromDate, setFilterFromDate] = useState("");
   const [filterToDate, setFilterToDate] = useState("");
@@ -38,11 +81,8 @@ const LeaveRecords = () => {
       const endpoint =
         user.role.toLowerCase() === "admin"
           ? `${API_URL}/leaves`
-          : `${API_URL}/leaves/employee/me`;
-      console.log("Fetching from endpoint:", endpoint); // Debug log
-
-      console.log("Token:", token);
-
+          : `${API_URL}/leaves/employee/${user.id}`; // use explicit employee/:id for consistency with dashboard
+          
       const [leavesRes, employeesRes] = await Promise.all([
         axios.get(endpoint, {
           headers: {
@@ -79,7 +119,10 @@ const LeaveRecords = () => {
       const enrich = (leave) => {
         const start = new Date(leave.start_date);
         const end = new Date(leave.end_date);
-        const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const calendarDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const lt = (leave.leave_type || '').toUpperCase();
+        // If this is a half unpaid or half medical/etc. leave, count as 0.5 per calendar day
+        const diffDays = (lt === 'HUL' || lt === 'HUPL' || lt === 'HML') ? 0.5 * calendarDays : calendarDays;
 
         const possibleIds = [
           leave.employee_id,
@@ -106,21 +149,74 @@ const LeaveRecords = () => {
           (foundEmail && byEmail.get(foundEmail)) ||
           (foundName && byName.get(foundName));
 
+        const employeeRole = emp?.role || 'employee';
         return {
           ...leave,
           total_days: diffDays,
+          employee_role: employeeRole, // Store the employee's role
           employee_name:
             leave.employee_name || emp?.name || leave.employee || "Unknown",
           teams:
             Array.isArray(leave.teams) && leave.teams.length
               ? leave.teams
               : emp?.teams || [],
+          main_project: emp.main_project_name || 'N/A',
+          other_project: emp.project_assignments && emp.project_assignments.length > 0
+            ? emp.project_assignments.map(p => p.project_name).join(', ')
+            : 'N/A',
+          // For PJ Leads, we'll set pj_lead_status to 'Approved' automatically
+          pj_lead_status: employeeRole === 'pj_lead' ? 'Approved' : leave.pj_lead_status
         };
       };
 
       const dataWithDays = Array.isArray(leavesRes.data)
         ? leavesRes.data.map(enrich)
         : [];
+      // compute counts
+      const total = dataWithDays.length;
+      // Compute unpaid leave in days using normalized total_days (half-day leaves have total_days = 0.5)
+      const upl = dataWithDays.reduce((sum, l) => {
+        const lt = (l.leave_type || '').toUpperCase();
+        if (lt === 'UPL' || lt === 'HUL' || lt === 'HUPL') return sum + (Number(l.total_days) || 0);
+        return sum;
+      }, 0);
+      const al = dataWithDays.filter(l => (l.leave_type || '').toUpperCase() === 'AL').length;
+      const totalLeaveDays = dataWithDays.reduce((sum, l) => sum + (l.total_days || 0), 0);
+
+      let remainingAL = null;
+      let totalAL = null;
+      // For non-admin users, try to fetch stats endpoint to get remainingAL and totalAL
+      if (user.role.toLowerCase() !== 'admin') {
+        try {
+          const statsRes = await axios.get(`${API_URL}/stats/employee/${user.id}`, { headers: { Authorization: `Bearer ${token}` } });
+          remainingAL = statsRes.data?.remainingAL ?? statsRes.data?.remaining_annual_leave ?? null;
+          totalAL = statsRes.data?.totalAL ?? statsRes.data?.total_annual_leave ?? null;
+        } catch (statErr) {
+          // ignore - leave remainingAL/totalAL as null
+        }
+      }
+
+      // If the user is within their first 3 months, annual leave should be 0
+      try {
+        const currentEmp = employees.find(e => String(e.id) === String(user.id) || e.email === user.email);
+        const joinedDateStr = currentEmp?.joined_date || currentEmp?.join_date || user.joined_date || user.join_date;
+        if (joinedDateStr) {
+          const joinDate = new Date(joinedDateStr);
+          if (!isNaN(joinDate.getTime())) {
+            const threeMonthsAfterJoin = new Date(joinDate);
+            threeMonthsAfterJoin.setMonth(joinDate.getMonth() + 3);
+            const today = new Date();
+            if (today < threeMonthsAfterJoin) {
+              remainingAL = 0;
+              totalAL = 0;
+            }
+          }
+        }
+      } catch (e) {
+        // non-fatal: leave values as-is
+      }
+
+      setLeaveCounts({ total, upl, al, remainingAL, totalAL, totalLeaveDays });
       setLeavesAll(dataWithDays);
       setLeaves(dataWithDays);
     } catch (err) {
@@ -129,18 +225,11 @@ const LeaveRecords = () => {
     } finally {
       setLoading(false);
     }
-  }, [user, token, navigate]); // Dependencies for useCallback
-    };
+  }, [user, token, navigate]);
 
   useEffect(() => {
-    if (authLoading) {
-      // Wait for authentication to complete
-      return;
-    }
     fetchLeavesFromServer();
-  }, [fetchLeavesFromServer, authLoading]); // Dependency for useEffect
-    fetchLeaves();
-  }, [authLoading, user, token, navigate]); // Dependencies for useEffect
+  }, [fetchLeavesFromServer]);
 
   const applyFilters = () => {
     let filtered = [...leavesAll];
@@ -167,6 +256,20 @@ const LeaveRecords = () => {
       );
     }
 
+    if (filterPJ) {
+      const q = filterPJ.toLowerCase();
+      filtered = filtered.filter((l) => {
+        const mp = (l.main_project || "").toString().toLowerCase();
+        const other = (l.other_project || "").toString().toLowerCase();
+        return mp.includes(q) || other.includes(q) || (l.main_pj_id && l.main_pj_id.toString().includes(q));
+      });
+    }
+
+    if (filterEmployee) {
+      const q = filterEmployee.toLowerCase();
+      filtered = filtered.filter((l) => (l.employee_name || "").toLowerCase().includes(q));
+    }
+
     setLeaves(filtered);
   };
 
@@ -176,6 +279,9 @@ const LeaveRecords = () => {
     setFilterFromDate("");
     setFilterToDate("");
     setFilterStatus("");
+    setFilterPJ("");
+    setFilterEmployee("");
+    setSelectedEmployeeName("");
     setLeaves(leavesAll);
   };
 
@@ -275,10 +381,65 @@ const LeaveRecords = () => {
     <div className="p-4 md:p-8 min-h-screen bg-gray-50">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-3">
         <h2 className="text-3xl font-extrabold text-gray-900">Leave Records</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              // export current filtered `leaves` as CSV
+              const rows = leaves.map(l => ({
+                Name: l.employee_name || 'N/A',
+                'Main Project': l.main_project || '',
+                'Other Project': l.other_project || '',
+                Start: formatYMD(l.start_date),
+                End: formatYMD(l.end_date),
+                'Leave Days': l.total_days ?? '',
+                Reason: l.reason || '',
+                'Leave Type': l.leave_type || '',
+                Status: l.status || '',
+              }));
+              const refDate = filterFromDate || filterToDate || new Date().toISOString();
+              const monthLabel = monthLabelFromDate(refDate);
+              const filename = `Leaves_${monthLabel}.csv`;
+              downloadCSV(rows, filename);
+            }}
+            className="bg-green-600 text-white rounded-lg p-2 hover:bg-green-700 transition"
+          >
+            Export CSV
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white p-4 rounded-lg shadow mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* Dashboard-style counts (Remaining/Total AL, Total Leave Days) - hide for admin users */}
+      {(user?.role || '').toLowerCase() !== 'admin' && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-5 rounded-lg shadow border">
+            <div className="text-sm text-gray-500">Annual Leave</div>
+            <div className="text-2xl font-bold mt-1">
+              <span className="text-green-600">{leaveCounts.remainingAL ?? user.remaining_annual_leave ?? '—'}</span>
+              <span className="text-gray-900">/{leaveCounts.totalAL ?? user.total_annual_leave ?? '—'}</span>
+              <span className="ml-2 text-sm text-gray-500">Days</span>
+            </div>
+            <div className="text-xs text-gray-500 mt-1">Remaining / Total</div>
+          </div>
+
+          <div className="bg-white p-5 rounded-lg shadow border">
+            <div className="text-sm text-gray-500">Total Leave Days</div>
+            <div className="text-2xl font-bold mt-1">{leaveCounts.totalLeaveDays} Days</div>
+          </div>
+          <div className="bg-white p-5 rounded-lg shadow border">
+            <div className="text-sm text-gray-500">Total Unpaid Leave (UPL)</div>
+            <div className="text-2xl font-bold mt-1 text-red-600">
+              {leaveCounts.upl == null
+                ? '—'
+                : Number.isInteger(leaveCounts.upl)
+                ? leaveCounts.upl
+                : leaveCounts.upl.toFixed(1)}
+            </div>
+          </div>
+        </div>
+      )}
+
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">
               From
@@ -319,6 +480,28 @@ const LeaveRecords = () => {
             </select>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700">PJ (Main Project)</label>
+            <input
+              type="text"
+              placeholder="Project name"
+              value={filterPJ}
+              onChange={(e) => setFilterPJ(e.target.value)}
+              className="border rounded-lg p-2 w-full focus:ring focus:ring-indigo-200 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Employee Name</label>
+            <input
+              type="text"
+              placeholder="Employee name"
+              value={filterEmployee}
+              onChange={(e) => setFilterEmployee(e.target.value)}
+              className="border rounded-lg p-2 w-full focus:ring focus:ring-indigo-200 outline-none"
+            />
+          </div>
+
           <div className="flex gap-2 items-end">
             <button
               onClick={handleSearch}
@@ -328,13 +511,71 @@ const LeaveRecords = () => {
             </button>
             <button
               onClick={handleReset}
-              className="flex-1 bg-gray-300 text-gray-800 rounded-lg p-2 hover:bg-gray-400 transition"
+              className="flex-1 bg-red-600 text-white rounded-lg p-2 hover:bg-red-700 transition"
             >
               Reset
             </button>
           </div>
         </div>
       </div>
+
+      {/* Monthly leave-days summary for selected employee (admin) */}
+      {user?.role && user.role.toLowerCase() === 'admin' && (filterEmployee || selectedEmployeeName) && (
+        (() => {
+          const targetName = selectedEmployeeName || filterEmployee;
+          // compute monthly summary from leavesAll (respecting date range if set)
+          const rows = leavesAll.filter(l => {
+            if (!l.employee_name) return false;
+            if (!l.employee_name.toLowerCase().includes(targetName.toLowerCase())) return false;
+            if (filterFromDate) {
+              const start = l.start_date ? l.start_date.slice(0,10) : '';
+              const end = l.end_date ? l.end_date.slice(0,10) : '';
+              if (!(start >= filterFromDate || end >= filterFromDate)) return false;
+            }
+            if (filterToDate) {
+              const start = l.start_date ? l.start_date.slice(0,10) : '';
+              const end = l.end_date ? l.end_date.slice(0,10) : '';
+              if (!(start <= filterToDate || end <= filterToDate)) return false;
+            }
+            return true;
+          });
+
+          const byMonth = {};
+          let totalDays = 0;
+          rows.forEach(r => {
+            const d = r.start_date ? new Date(r.start_date) : new Date();
+            const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+            const days = Number(r.total_days) || 0;
+            byMonth[key] = (byMonth[key] || 0) + days;
+            totalDays += days;
+          });
+
+          const entries = Object.keys(byMonth).sort().map(k => {
+            const [y,m] = k.split('-');
+            const monthName = new Date(Number(y), Number(m)-1, 1).toLocaleString('default', { month: 'long' });
+            return { key: k, label: `${monthName} ${y}`, days: byMonth[k] };
+          });
+
+          return (
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+              <h3 className="text-lg font-semibold mb-3">Monthly Leave Days for "{targetName}"</h3>
+              <div className="text-sm text-gray-600 mb-3">Total leave days: <span className="font-bold text-gray-900">{Number.isInteger(totalDays) ? totalDays : totalDays.toFixed(1)} Days</span></div>
+              {entries.length === 0 ? (
+                <div className="text-sm text-gray-600">No leave records found for this employee in the selected range.</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {entries.map(e => (
+                    <div key={e.key} className="bg-gray-50 p-3 rounded-lg border">
+                      <div className="text-sm text-gray-500">{e.label}</div>
+                      <div className="text-2xl font-bold mt-1">{Number.isInteger(e.days) ? e.days : e.days.toFixed(1)} Days</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()
+      )}
 
       {loading && (
         <div className="text-center py-8">
@@ -367,50 +608,71 @@ const LeaveRecords = () => {
           No leave records found matching your current filters.
         </div>
       )}
-
       {!loading && !error && leaves.length > 0 && (
-        <div className="hidden md:block overflow-x-auto bg-white rounded-xl shadow-lg">
-          <table className="min-w-full">
+
+        <div className="hidden md:block w-full overflow-x-auto bg-white rounded-xl shadow-lg">
+          <table className="min-w-[1400px] w-max">
             <thead className="bg-gray-100 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-200">
               <tr>
-                <th className="py-3 px-4 text-center">Start</th>
-                <th className="py-3 px-4 text-center">End</th>
-                <th className="py-3 px-4 text-center">Leave Days</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap sticky left-0 bg-gray-100 z-30 shadow-sm w-48">Name</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Main Project</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Other Project</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Start</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">End</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Leave Days</th>
                 <th className="py-3 px-4 text-center">Reason</th>
-                <th className="py-3 px-4 text-center">Leave Type</th>
-                <th className="py-3 px-4 text-center">Status</th>
-                <th className="py-3 px-4 text-center">Action</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Leave Type</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Status</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap sticky right-0 bg-gray-100 z-20 shadow-sm">Action</th>
               </tr>
             </thead>
             <tbody className="text-gray-700 divide-y divide-gray-100 font-semibold">
               {leaves.map((leave) => (
                 <tr key={leave.id} className="border-t">
-                  <td className="py-2 px-4">{formatYMD(leave.start_date)}</td>
-                  <td className="py-2 px-4">{formatYMD(leave.end_date)}</td>
-                  <td className="py-2 px-4">{leave.total_days}</td>
-                  <td className="py-2 px-4">{leave.reason}</td>
-                  <td className="py-2 px-4">{leave.leave_type}</td>
-                  <td className="py-2 px-4">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-semibold ${leave.status === "approved"
-                        ? "bg-green-100 text-green-700"
-                        : leave.status === "pending"
-                          ? "bg-yellow-100 text-yellow-700"
-                          : "bg-red-100 text-red-700"
-                        }`}
-                    >
-                      {leave.status}
-                    </span>
+                  <td className="py-2 px-4 whitespace-nowrap sticky left-0 bg-white z-30 w-48 border-r border-gray-100">
+                      <button
+                        onClick={() => navigate(`/admin/employee-leave-count/${encodeURIComponent(leave.employee_name)}`)}
+                        className="text-left w-full text-indigo-600 hover:underline hover:text-indigo-800 font-semibold truncate"
+                        title={`Show monthly summary for ${leave.employee_name}`}
+                      >
+                        {leave.employee_name}
+                      </button>
                   </td>
-
-                  <td className="py-2 px-4 text-center">
+                  <td className="py-2 px-4 whitespace-nowrap">{leave.main_project || 'N/A'}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{leave.other_project || 'N/A'}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{formatYMD(leave.start_date)}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{formatYMD(leave.end_date)}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{leave.total_days}</td>
+                  <td className="py-2 px-4">{leave.reason}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">{leave.leave_type}</td>
+                  <td className="py-2 px-4 whitespace-nowrap">
+                    {leave.status === "pending" ? (
+                      <button
+                        onClick={() => navigate(`/leave-request/${leave.id}`)}
+                        className="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 hover:bg-yellow-200 transition-colors"
+                      >
+                        {leave.status}
+                      </button>
+                    ) : (
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                          leave.status === "approved"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {leave.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 px-4 text-center whitespace-nowrap sticky right-0 bg-white z-10">
                     <button
                       onClick={() => handleOpenDetailModal(leave)}
                       className="text-indigo-600 hover:text-indigo-900 transition-colors font-semibold"
                     >
                       Detail
                     </button>
-                    {user.role.toLowerCase() === 'admin' && (
+                    {/* {user.role.toLowerCase() === 'admin' && (
                       <button
                         onClick={() =>
                           setConfirmModal({ isOpen: true, leaveId: leave.id })
@@ -420,7 +682,7 @@ const LeaveRecords = () => {
                       >
                         Delete
                       </button>
-                    )}
+                    )} */}
                   </td>
                 </tr>
               ))}
@@ -439,11 +701,15 @@ const LeaveRecords = () => {
               {user.role.toLowerCase() === "admin" && (
                 <>
                   <p className="text-sm font-semibold text-gray-800 mb-1">
-                    {leave.employee_name || "Unknown"}
+                      <button
+                        onClick={() => navigate(`/admin/employee-leave-count/${encodeURIComponent(leave.employee_name)}`)}
+                        className="text-indigo-600 hover:underline"
+                        title={`Show monthly summary for ${leave.employee_name}`}
+                      >
+                        {leave.employee_name || "Unknown"}
+                      </button>
                   </p>
-                  <p className="text-xs text-gray-600 mb-1">
-                    {renderTeams(leave)}
-                  </p>
+                  <p className="text-xs text-gray-600 mb-1">{renderTeams(leave)}</p>
                 </>
               )}
               <div className="flex justify-between items-center mb-2">

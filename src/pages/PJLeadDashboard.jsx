@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { XCircle, CheckCircle, RefreshCw, Edit, Loader2 } from "lucide-react";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
+import WishesList from "../components/WishesList";
+import TodayBirthdays from "../components/TodayBirthdays";
 
 const API_URL = "http://localhost:5000";
 
@@ -15,12 +17,13 @@ const PJLeadDashboard = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedLeave, setSelectedLeave] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [approvedDays, setApprovedDays] = useState("1");
+  const [approvedDays, setApprovedDays] = useState(0); // Initialize to 0 or null
+  const [qaRecords, setQaRecords] = useState([]);
+  const [updatedLeaves, setUpdatedLeaves] = useState([]);
   const [confirmDeleteModal, setConfirmDeleteModal] = useState({
     isOpen: false,
     leaveId: null,
   });
-
 
   const { user, loading: authLoading, token } = useAuth();
   const userId = user?.id;
@@ -78,6 +81,15 @@ const PJLeadDashboard = () => {
           .catch(() => ({ data: [] })), // Fallback if endpoint doesn't exist
       ]);
 
+      console.log(
+        "PJLeadDashboard.fetchLeaves: todayResponse.data=",
+        todayResponse.data
+      );
+      console.log(
+        "PJLeadDashboard.fetchLeaves: allLeavesResponse.data=",
+        allLeavesResponse.data
+      );
+
       // Validate response data
       if (!Array.isArray(todayResponse.data)) {
         console.warn(
@@ -87,24 +99,17 @@ const PJLeadDashboard = () => {
         setLeaves([]);
         setError(null);
       } else {
-        // Filter to show only today's leave requests
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        // Show all pending leaves for the PJ lead (do not restrict to today's created_at)
+        // The API already returns pending leaves relevant to the PJ lead.
+        const pendingLeaves = Array.isArray(todayResponse.data)
+          ? todayResponse.data
+          : [];
 
-        const todayLeaves = todayResponse.data.filter((l) => {
-          if (!l.created_at && !l.start_date) return false;
-          const leaveDate = l.created_at
-            ? new Date(l.created_at)
-            : new Date(l.start_date);
-          leaveDate.setHours(0, 0, 0, 0);
-          return leaveDate.getTime() === today.getTime();
-        });
-
-        setLeaves(todayLeaves);
+        setLeaves(pendingLeaves);
         setAllEmployeeLeaves(
           Array.isArray(allLeavesResponse.data)
             ? allLeavesResponse.data
-            : todayResponse.data
+            : pendingLeaves
         );
         setError(null);
       }
@@ -112,23 +117,10 @@ const PJLeadDashboard = () => {
       console.error("Failed to fetch leaves", err);
       // If all endpoint fails, use the today's data for counting
       try {
-        const response = await axios.get(`${API_URL}/api/leaves/pj-lead`, {
-          headers: { Authorization: `Bearer ${currentToken}` },
-        });
-        if (Array.isArray(response.data)) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const todayLeaves = response.data.filter((l) => {
-            if (!l.created_at && !l.start_date) return false;
-            const leaveDate = l.created_at
-              ? new Date(l.created_at)
-              : new Date(l.start_date);
-            leaveDate.setHours(0, 0, 0, 0);
-            return leaveDate.getTime() === today.getTime();
-          });
-          setLeaves(todayLeaves);
-          setAllEmployeeLeaves(response.data);
-        }
+        // Fallback logic is removed as the primary fetch should be reliable now.
+        // If the primary fetch fails, the error is set.
+        // The `allLeavesResponse` is for counting, not for the main table display.
+        // The `leaves` state should directly reflect the `/api/leaves/pj-lead` endpoint.
       } catch (fallbackErr) {
         setError(
           err.response?.data?.message || "Failed to fetch leave requests."
@@ -142,111 +134,134 @@ const PJLeadDashboard = () => {
     }
   }, []);
 
-  const handlePjLeadApprove = async (leaveId, approvedDays) => {
+  const fetchUpdatedLeaves = useCallback(async () => {
+    const currentToken = localStorage.getItem("token");
+    if (!currentToken) return;
     try {
-      console.log('Making request to:', `${API_URL}/api/leaves/pj/${leaveId}`);
+      const res = await axios.get(`${API_URL}/api/leaves/pj-lead/updated`, {
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+      // route returns { success, data, count }
+      const rows =
+        res.data && Array.isArray(res.data.data) ? res.data.data : [];
+      setUpdatedLeaves(rows);
+    } catch (err) {
+      console.warn("Failed to fetch updated leaves:", err?.message || err);
+      setUpdatedLeaves([]);
+    }
+  }, []);
+
+  const fetchQaRecords = useCallback(async () => {
+    if (!token || !userId) {
+      setQaRecords([]);
+      return;
+    }
+
+    try {
+      const res = await axios.get(`${API_URL}/api/employees/${userId}/qa`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setQaRecords(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error("Failed to fetch QA records:", err);
+      setQaRecords([]); // Reset QA records on error
+    }
+  }, [token, userId]);
+
+  const handlePjLeadApprove = async (leaveId, approvedDays) => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      console.log("Making request to:", `${API_URL}/api/leaves/pj/${leaveId}`);
 
       const response = await axios.patch(
         `${API_URL}/api/leaves/pj/${leaveId}`,
         {
-          status: 'Approved',
+          status: "Approved",
           approved_leave_days: approvedDays,
           approved_by_pj_lead: user.employee_name || user.name,
-          pj_approval_status: 'Approved'
+          pj_approval_status: "Approved",
         },
         {
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          }
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         }
       );
 
-      console.log('Response:', response.data);
+      console.log("Response:", response.data);
+      // Refresh list and close modal
+      try {
+        await fetchLeaves();
+      } catch (e) {
+        console.warn(
+          "Failed to refresh leaves after approve:",
+          e?.message || e
+        );
+      }
+      setIsEditModalOpen(false);
+      setSelectedLeave(null);
+      setError(null);
       return response.data;
     } catch (error) {
-      console.error('Error in handlePjLeadApprove:', {
+      console.error("Error in handlePjLeadApprove:", {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status
+        status: error.response?.status,
       });
+      setError(
+        error.response?.data?.message ||
+          error.message ||
+          "Failed to approve leave"
+      );
       throw error;
+    } finally {
+      setIsSubmitting(false);
     }
   };
-  // In the render method, add this to the leave request items:
-  {
-    leaves.map(leave => (
-      <div key={leave.id} className="border p-4 mb-4">
-        {/* Existing leave info */}
-        {leave.pj_approval_status === 'Pending' && (
-          <div className="mt-2">
-            <input
-              type="number"
-              min="0.5"
-              step="0.5"
-              className="border p-1 w-20 mr-2 text-sm"
-              placeholder="Days"
-              value={approvedDays}
-              onChange={(e) => setApprovedDays(e.target.value)}
-            />
-            <button
-              onClick={() => handlePjLeadApprove(leave.id, parseFloat(approvedDays || 1))}
-              className="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600 transition-colors"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => handlePjLeadReject(leave.id)}
-              className="bg-red-500 text-white px-3 py-1 rounded ml-2 text-sm hover:bg-red-600 transition-colors"
-            >
-              Reject
-            </button>
-          </div>
-        )}
-      </div>
-    ))
-  }
 
   const handlePjLeadReject = async (leaveId) => {
     try {
-      console.log('Attempting to reject leave:', leaveId, 'for user:', user);
-      
+      console.log("Attempting to reject leave:", leaveId, "for user:", user);
+
       const response = await axios.patch(
         `${API_URL}/api/leaves/pj/${leaveId}`,
         {
-          pj_approval_status: 'Rejected',
-          approved_by_pj_lead: user.employee_name || user.name || 'PJ Lead',
+          pj_approval_status: "Rejected",
+          approved_by_pj_lead: user.employee_name || user.name || "PJ Lead",
           // No need to send approved_leave_days for rejection
         },
-        { 
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          } 
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         }
       );
-      
-      console.log('Rejection successful:', response.data);
-      
-      // Show success message
+
+      console.log("Rejection successful:", response.data);
       setError(null);
-      
+      setIsEditModalOpen(false); // Close modal
+      setSelectedLeave(null); // Clear selected leave
       // Refresh the list
       await fetchLeaves();
-      
     } catch (error) {
-      console.error('Error rejecting leave:', {
+      console.error("Error rejecting leave:", {
         message: error.message,
         response: error.response?.data,
         status: error.response?.status,
         config: {
           url: error.config?.url,
           method: error.config?.method,
-          data: error.config?.data
-        }
+          data: error.config?.data,
+        },
       });
-      
-      setError(error.response?.data?.message || 'Failed to reject leave. Please try again.');
+
+      setError(
+        error.response?.data?.message ||
+          "Failed to reject leave. Please try again."
+      );
     }
   };
 
@@ -266,12 +281,22 @@ const PJLeadDashboard = () => {
     if (user) {
       fetchDashboard();
       fetchLeaves();
+      fetchUpdatedLeaves();
+      fetchQaRecords();
     } else {
       setLoading(false);
     }
-  }, [user, authLoading, fetchDashboard, fetchLeaves]);
+  }, [
+    user,
+    authLoading,
+    fetchDashboard,
+    fetchLeaves,
+    fetchUpdatedLeaves,
+    fetchQaRecords,
+  ]);
 
-  const handleLeaveAction = async (leaveId, action, data = {}) => {
+  // Renamed handleLeaveAction to handleDeleteLeaveRequest for clarity
+  const handleDeleteLeaveRequest = async (leaveId) => {
     const currentToken = localStorage.getItem("token");
     if (!currentToken) {
       setError("No authentication token found.");
@@ -280,25 +305,16 @@ const PJLeadDashboard = () => {
 
     setIsSubmitting(true);
     try {
-      if (action === "delete") {
-        await axios.delete(`${API_URL}/api/leaves/${leaveId}`, {
-          headers: { Authorization: `Bearer ${currentToken}` },
-        });
-        setConfirmDeleteModal({ isOpen: false, leaveId: null });
-      } else {
-        await axios.patch(
-          `${API_URL}/api/leaves/pj/${leaveId}`,
-          { action, ...data },
-          { headers: { Authorization: `Bearer ${currentToken}` } }
-        );
-      }
-
+      await axios.delete(`${API_URL}/api/leaves/${leaveId}`, {
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+      setConfirmDeleteModal({ isOpen: false, leaveId: null });
       await fetchLeaves(); // Refresh list
-      setIsEditModalOpen(false); // Close modal on success
-      setSelectedLeave(null);
     } catch (err) {
-      console.error(`Failed to ${action} leave`, err);
-      setError(`Failed to ${action} leave status.`);
+      console.error(`Failed to delete leave`, err);
+      setError(
+        err.response?.data?.message || `Failed to delete leave request.`
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -310,20 +326,31 @@ const PJLeadDashboard = () => {
       start_date: formatYMD(leave.start_date),
       end_date: formatYMD(leave.end_date),
     });
-    setIsEditModalOpen(true);
-  };
-
-  const handleSaveChanges = (action) => {
-    console.log('Save changes button clicked');
-    if (selectedLeave) {
-      const { id, start_date, end_date, leave_type, reason } = selectedLeave;
-      handleLeaveAction(id, action, {
-        start_date,
-        end_date,
-        leave_type,
-        reason,
-      });
+    // Initialize approvedDays with the leave's total_days when opening the modal
+    // If total_days is not available, compute from start/end and leave_type (HUL/HUPL/HML count as 0.5 per calendar day)
+    let defaultApproved = leave.total_days;
+    if (defaultApproved == null) {
+      try {
+        const s = leave.start_date ? new Date(leave.start_date) : null;
+        const e = leave.end_date ? new Date(leave.end_date) : null;
+        if (s && e) {
+          const MS_PER_DAY = 1000 * 60 * 60 * 24;
+          const calendarDays =
+            Math.ceil((e.getTime() - s.getTime()) / MS_PER_DAY) + 1;
+          const lt = (leave.leave_type || "").toUpperCase();
+          defaultApproved =
+            lt === "HUL" || lt === "HUPL" || lt === "HML"
+              ? 0.5 * calendarDays
+              : calendarDays;
+        } else {
+          defaultApproved = 1;
+        }
+      } catch (err) {
+        defaultApproved = 1;
+      }
     }
+    setApprovedDays(defaultApproved); // Default to computed value
+    setIsEditModalOpen(true);
   };
 
   const pendingCount = leaves.filter(
@@ -336,6 +363,16 @@ const PJLeadDashboard = () => {
     (l) => l.pj_lead_status === "Rejected"
   ).length;
 
+  // Derived array of pending leaves (used by the table). Falls back to checking `status` as well.
+  const pendingLeaves = Array.isArray(leaves)
+    ? leaves.filter((l) => {
+        const st = (l.pj_lead_status || l.status || "")
+          .toString()
+          .toLowerCase();
+        return st === "pending";
+      })
+    : [];
+
   // Calculate stats for the cards
   const totalAL = Number(
     employeeStats?.totalAL || user?.total_annual_leave || 12
@@ -344,11 +381,6 @@ const PJLeadDashboard = () => {
     employeeStats?.remainingAL || user?.remaining_annual_leave || 12
   );
   const takenAL = Math.max(0, totalAL - remainingAL); // Total leave days taken
-
-  // Filter to show only pending leave requests in the table
-  const pendingLeaves = leaves.filter(
-    (l) => l.pj_lead_status === "Pending" || l.pj_lead_status === null
-  );
 
   // Calculate pending and approved counts per employee
   const getEmployeeLeaveCounts = (employeeId) => {
@@ -390,9 +422,12 @@ const PJLeadDashboard = () => {
       if (isNaN(startDate) || isNaN(endDate) || endDate < startDate) return 0;
 
       const MS_PER_DAY = 1000 * 60 * 60 * 24;
-      const timeDiff = endDate.getTime() - startDate.getTime();
-      const dayDiff = Math.round(timeDiff / MS_PER_DAY) + 1;
-      return dayDiff;
+      const calendarDays =
+        Math.ceil((endDate.getTime() - startDate.getTime()) / MS_PER_DAY) + 1;
+      const lt = (selectedLeave?.leave_type || "").toUpperCase();
+      return lt === "HUL" || lt === "HUPL" || lt === "HML"
+        ? 0.5 * calendarDays
+        : calendarDays;
     };
 
     return (
@@ -407,8 +442,18 @@ const PJLeadDashboard = () => {
               className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-500"
             >
               <span className="sr-only">Close</span>
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -422,14 +467,6 @@ const PJLeadDashboard = () => {
                 </p>
                 <p className="font-bold text-gray-900 text-lg truncate">
                   {selectedLeave.employee_name}
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-sm text-gray-600 mb-1">
-                  Project(s)
-                </p>
-                <p className="font-bold text-gray-900 text-lg truncate">
-                  {selectedLeave.projects || "N/A"}
                 </p>
               </div>
             </div>
@@ -475,14 +512,18 @@ const PJLeadDashboard = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                Total Leave Days
+                Approved Leave Days
               </label>
-              <div className="w-full mt-1 p-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500">
-                {calculateLeaveDays(
-                  selectedLeave.start_date,
-                  selectedLeave.end_date
-                )}
-              </div>
+              <input
+                type="number"
+                min="0.5"
+                step="0.5"
+                id="approved_days"
+                value={approvedDays}
+                onChange={(e) => setApprovedDays(e.target.value)}
+                className="w-full mt-1 p-2 border rounded-md"
+                disabled={isSubmitting}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
@@ -503,7 +544,7 @@ const PJLeadDashboard = () => {
           </div>
           <div className="flex justify-end gap-3 py-4 px-6 bg-gray-50 rounded-b-xl">
             <button
-              onClick={() => handleSaveChanges("Rejected")}
+              onClick={() => handlePjLeadReject(selectedLeave.id)}
               className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
               disabled={isSubmitting}
             >
@@ -515,10 +556,12 @@ const PJLeadDashboard = () => {
               Reject
             </button>
             <button
-              onClick={(e) => {
-                e.preventDefault(); // Prevent default form submission if inside a form
-                console.log('Button clicked directly!');
-                handleSaveChanges("Approved");
+              onClick={async () => {
+                try {
+                  await handlePjLeadApprove(selectedLeave.id, parseFloat(approvedDays));
+                } catch (e) {
+                  // Error is already handled/recorded inside handlePjLeadApprove
+                }
               }}
               className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
               disabled={isSubmitting}
@@ -528,7 +571,7 @@ const PJLeadDashboard = () => {
               ) : (
                 <CheckCircle size={18} />
               )}
-              Approve & Save
+              Approve
             </button>
           </div>
         </div>
@@ -550,6 +593,9 @@ const PJLeadDashboard = () => {
         </div>
       )}
 
+      {/* Today's birthdays (visible to all employees) */}
+      <TodayBirthdays />
+
       {/* Stats Cards - Similar to Employee Dashboard */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white p-5 rounded-lg shadow border">
@@ -567,6 +613,9 @@ const PJLeadDashboard = () => {
           <div className="text-2xl font-bold mt-1">{takenAL} Days</div>
         </div>
       </div>
+
+      {/* Messages / Wishes for PJ Lead */}
+      <WishesList />
 
       {/* Leave Requests Table */}
       <div className="bg-white rounded-lg shadow border">
@@ -588,19 +637,8 @@ const PJLeadDashboard = () => {
               <h1 className="text-3xl font-bold text-gray-800">
                 Today's Leave Requests
               </h1>
-              <button
-                onClick={fetchLeaves}
-                disabled={refreshing}
-                className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                title="Refresh"
-              >
-                <RefreshCw
-                  size={20}
-                  className={refreshing ? "animate-spin" : ""}
-                />
-              </button>
             </div>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-l text-gray-500 mt-1">
               Pending leave requests submitted today from your employees
             </p>
           </div>
@@ -638,13 +676,19 @@ const PJLeadDashboard = () => {
                 .map((l) => {
                   const start = l.start_date ? new Date(l.start_date) : null;
                   const end = l.end_date ? new Date(l.end_date) : null;
-                  const days =
-                    start && end
-                      ? Math.ceil(
-                        (end.getTime() - start.getTime()) /
-                        (1000 * 60 * 60 * 24)
-                      ) + 1
-                      : 0;
+                  let days = 0;
+                  if (start && end) {
+                    const MS_PER_DAY = 1000 * 60 * 60 * 24;
+                    const calendarDays =
+                      Math.ceil(
+                        (end.getTime() - start.getTime()) / MS_PER_DAY
+                      ) + 1;
+                    const lt = (l.leave_type || "").toUpperCase();
+                    days =
+                      lt === "HUL" || lt === "HUPL" || lt === "HML"
+                        ? 0.5 * calendarDays
+                        : calendarDays;
+                  }
                   const status = l.pj_lead_status || "Pending";
                   const isPending = status === "Pending";
                   const employeeCounts = getEmployeeLeaveCounts(l.employee_id);
@@ -681,12 +725,13 @@ const PJLeadDashboard = () => {
                       </td>
                       <td className="px-5 py-3">
                         <span
-                          className={`px-2 py-1 text-xs font-semibold rounded-full ${status === "Pending"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : status === "Approved"
+                          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            status === "Pending"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : status === "Approved"
                               ? "bg-green-100 text-green-700"
                               : "bg-red-100 text-red-700"
-                            }`}
+                          }`}
                         >
                           {status}
                         </span>
@@ -726,6 +771,69 @@ const PJLeadDashboard = () => {
                     </div>
                   </td>
                 </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* QA Records Section */}
+      <div className="bg-white rounded-lg shadow border mt-6">
+        <div className="p-5 border-b">
+          <div className="text-xl font-bold">My QA Records</div>
+          <p className="text-sm text-gray-500">
+            Your quality assessment records and scores.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead>
+              <tr className="text-left text-gray-500 text-sm">
+                <th className="px-5 py-3">Date</th>
+                <th className="px-5 py-3">QA Score</th>
+                <th className="px-5 py-3">Description</th>
+              </tr>
+            </thead>
+            <tbody className="font-semibold">
+              {qaRecords.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="px-5 py-6 text-center text-sm text-gray-500"
+                  >
+                    No QA records found.
+                  </td>
+                </tr>
+              ) : (
+                qaRecords.slice(0, 10).map((qa) => {
+                  const createdDate = qa.created_at
+                    ? new Date(qa.created_at)
+                    : null;
+
+                  return (
+                    <tr key={qa.id} className="border-t text-sm">
+                      <td className="px-5 py-3">
+                        {createdDate ? formatYMD(createdDate) : "—"}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            qa.qa_score >= 80
+                              ? "bg-green-100 text-green-800"
+                              : qa.qa_score >= 60
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-red-100 text-red-800"
+                          }`}
+                        >
+                          {qa.qa_score || 0}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 truncate max-w-xs">
+                        {qa.description || "—"}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

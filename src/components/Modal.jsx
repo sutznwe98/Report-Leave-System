@@ -1,7 +1,7 @@
 import React from 'react';
 import { XIcon } from './Icons'; // For the close button
 
-const Modal = ({ title, onClose, children }) => {
+const Modal = ({ title, onClose, children, maxWidthClass = 'max-w-md' }) => {
     // This stops the click from closing the modal if you click inside the content area
     const handleContentClick = (e) => {
         e.stopPropagation();
@@ -15,7 +15,7 @@ const Modal = ({ title, onClose, children }) => {
         >
             {/* The modal content container */}
             <div 
-                className="bg-white rounded-lg shadow-xl w-full max-w-md m-4"
+                className={`bg-white rounded-lg shadow-xl w-full ${maxWidthClass} m-4`}
                 onClick={handleContentClick}
             >
                 {/* Modal Header */}

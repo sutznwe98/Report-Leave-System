@@ -4,6 +4,9 @@ import { useNavigate } from "react-router-dom";
 // Using lucide-react for icons (assuming it's available in the environment)
 import { List, XCircle, Loader2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import formatRole from '../utils/formatRole';
+import Swal from 'sweetalert2';
+import ReportDetailModal from '../components/ReportDetailModal';
 
 const API_URL = "http://localhost:5000/api";
 
@@ -12,6 +15,8 @@ const AdminDashboard = () => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
   const { user } = useAuth();
 
   const navigate = useNavigate();
@@ -36,6 +41,13 @@ const AdminDashboard = () => {
       d.getDate() === now.getDate()
     );
   };
+
+  const isToday = (dateString) => {
+    const today = new Date();
+    const date = new Date(dateString);
+    return date.toDateString() === today.toDateString();
+  };
+
 
   // Fetch data from API
   useEffect(() => {
@@ -84,13 +96,13 @@ const AdminDashboard = () => {
           if (!emp) return row;
           return {
             ...row,
-            employee_name: row.employee_name || emp.name || "N/A",
-            main_project: emp.project,
-            other_project: emp.other_project,
-            teams:
-              Array.isArray(row.teams) && row.teams.length
-                ? row.teams
-                : emp.teams || [],
+            employee_name: row.employee_name || emp.name || "-",
+            main_project: emp.project || row.main_project || "-",
+            other_projects: emp.other_project || row.other_projects || "None",
+            role: emp.role || row.role || "-",  // Add role field
+            teams: Array.isArray(row.teams) && row.teams.length
+              ? row.teams
+              : emp.teams || [],
           };
         };
 
@@ -122,9 +134,9 @@ const AdminDashboard = () => {
 
   // Filter only today's reports
   const formatYMD = (dt) => {
-    if (!dt) return "N/A";
+    if (!dt) return "-";
     const d = new Date(dt);
-    if (isNaN(d.getTime())) return "N/A";
+    if (isNaN(d.getTime())) return "-";
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
@@ -163,64 +175,158 @@ const AdminDashboard = () => {
     );
 
   // Determine which reports to display and what the count should be
-  const reportsToDisplay =
-    todaysReports.length > 0 ? todaysReports : reports.slice(0, 10);
-  const pendingLeaves = leaves.filter(
-    (l) => (l.status || "").toLowerCase() === "pending"
+  const reportsToDisplay = reports
+    .filter(r => isToday(r.report_date) || isToday(r.submission_time) || isToday(r.created_at))
+    .sort((a, b) =>
+      new Date(b.submission_time || b.report_date || b.created_at) -
+      new Date(a.submission_time || a.report_date || a.created_at)
+    );
+
+  // Show all leaves that need admin attention, not just today's
+  const allLeaves = [...leaves]
+    .filter(leave => {
+      return (
+        leave.status === 'Pending' ||
+        (leave.pj_lead_status === 'Approved' && leave.status !== 'Rejected')
+      );
+    })
+    .sort((a, b) =>
+      new Date(b.created_at || b.start_date) - new Date(a.created_at || a.start_date)
+    );
+
+  // Show all pending leaves that need admin attention
+  const pendingLeaves = allLeaves.filter(leave =>
+    leave.status === 'Pending' ||
+    (leave.pj_lead_status === 'Approved' && leave.status === 'Pending Admin Approval')
   );
 
   // Updated helper to show detailed pending status
   const getLeaveStatusBadge = (leave) => {
-    const { status, pj_lead_status } = leave;
-    switch (status?.toLowerCase()) {
-      case "approved":
-        return (
-          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-green-100 text-green-800 border-green-300">
-            Approved
-          </span>
-        );
-      case "pending":
-        if (pj_lead_status?.toLowerCase() === "approved") {
-          return (
-            <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-blue-100 text-blue-800 border-blue-300">
-              Pending Admin
-            </span>
-          );
-        }
-        return (
-          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-yellow-100 text-yellow-800 border-yellow-300">
-            Pending PJL
-          </span>
-        );
-      case "rejected":
-        return (
-          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-red-100 text-red-800 border-red-300">
-            Rejected
-          </span>
-        );
-      default:
-        return (
-          <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-gray-100 text-gray-800 border-gray-300">
-            {status || "Unknown"}
-          </span>
-        );
+    const { status, pj_lead_status, admin_approval_status } = leave;
+
+    if (status === 'Approved') {
+      return (
+        <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-green-100 text-green-800 border-green-300">
+          Approved
+        </span>
+      );
     }
+
+    if (status === 'Rejected') {
+      return (
+        <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-red-100 text-red-800 border-red-300">
+          Rejected
+        </span>
+      );
+    }
+
+    if (pj_lead_status === 'Approved' && admin_approval_status === 'Pending') {
+      return (
+        <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-blue-100 text-blue-800 border-blue-300">
+          Pending Admin Approval
+        </span>
+      );
+    }
+
+    if (pj_lead_status === 'Rejected') {
+      return (
+        <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-red-100 text-red-800 border-red-300">
+          Rejected by PJ Lead
+        </span>
+      );
+    }
+
+    return (
+      <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-yellow-100 text-yellow-800 border-yellow-300">
+        Pending
+      </span>
+    );
   };
 
   const getReportStatusClasses = (status) => {
-    switch ((status || "").toString()) {
-      case "OnTime":
+    switch ((status || "").toString().toLowerCase()) {
+      case "ontime":
         return "bg-green-100 text-green-700 border-green-300";
-      case "QA":
+      case "qa":
         return "bg-yellow-100 text-yellow-800 border-yellow-300";
-      case "HUL":
+      case "hul":
         return "bg-orange-100 text-orange-800 border-orange-300";
-      case "UPL":
+      case "upl":
         return "bg-red-100 text-red-800 border-red-300";
-      case "Late":
+      case "late":
         return "bg-orange-100 text-orange-800 border-orange-300";
+      case "approved":
+        return "bg-green-100 text-green-800 border-green-300";
+      case "rejected":
+        return "bg-red-100 text-red-800 border-red-300";
+      case "pending":
+        return "bg-yellow-100 text-yellow-800 border-yellow-300";
       default:
         return "bg-gray-100 text-gray-800 border-gray-300";
+    }
+  };
+  const handleEditLeave = async (leave) => {
+    const { value: formValues } = await Swal.fire({
+      title: 'Edit Leave',
+      html: `
+      <div class="text-left">
+        <label class="block text-sm font-medium text-gray-700 mb-1">Leave Type</label>
+        <select id="leaveType" class="swal2-input mb-4 w-full">
+          <option value="AL" ${leave.leave_type === 'AL' ? 'selected' : ''}>Annual Leave</option>
+          <option value="ML" ${leave.leave_type === 'ML' ? 'selected' : ''}>Medical Leave</option>
+          <option value="UPL" ${leave.leave_type === 'UPL' ? 'selected' : ''}>Unpaid Leave</option>
+        </select>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+        <select id="status" class="swal2-input w-full">
+          <option value="Approved" ${leave.status === 'Approved' ? 'selected' : ''}>Approve</option>
+          <option value="Rejected" ${leave.status === 'Rejected' ? 'selected' : ''}>Reject</option>
+          ${leave.status === 'Pending Admin Approval' ? '<option value="Pending Admin Approval" selected>Pending</option>' : ''}
+        </select>
+      </div>
+    `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: 'Update',
+      preConfirm: () => {
+        return {
+          leave_type: document.getElementById('leaveType').value,
+          status: document.getElementById('status').value
+        };
+      }
+    });
+
+    if (formValues) {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await axios.patch(
+          `${API_URL}/leaves/${leave.id}/admin-approve`,
+          {
+            ...formValues,
+            admin_id: user.id
+          },
+          {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        );
+
+        // Update the local state
+        setLeaves(leaves.map(l =>
+          l.id === leave.id ? { ...l, ...response.data } : l
+        ));
+
+        Swal.fire(
+          'Updated!',
+          'Leave request has been updated.',
+          'success'
+        );
+      } catch (error) {
+        console.error('Error updating leave:', error);
+        Swal.fire(
+          'Error!',
+          'Failed to update leave request.',
+          'error'
+        );
+      }
     }
   };
 
@@ -258,7 +364,7 @@ const AdminDashboard = () => {
             .map((t) => t.trim())
             .filter(Boolean)
           : [];
-    return arr.length ? arr.join(", ") : "N/A";
+    return arr.length ? arr.join(", ") : "-";
   };
 
   if (loading) {
@@ -298,6 +404,8 @@ const AdminDashboard = () => {
           <div className="h-1 w-24 bg-purple-500 rounded mt-3"></div>
         </header>
 
+        {/* Today's birthdays removed from Admin dashboard - badge shown in sidebar instead */}
+
         <div className="grid grid-cols-1 gap-12">
           {/* Leaves Card */}
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
@@ -311,106 +419,103 @@ const AdminDashboard = () => {
               </span>
             </div>
 
-            <div className="p-0 overflow-x-auto max-h-96">
-              {leaves.length > 0 ? (
-                <table className="min-w-full divide-y divide-gray-200">
+            <div className="w-full overflow-x-auto">
+              {allLeaves.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="text-gray-400 mb-2">
+                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-900">No leave requests for today</h3>
+                  <p className="text-gray-500 mt-1">There are no leave requests scheduled for today.</p>
+                </div>
+              ) : (
+                <table className="w-full min-w-[900px] divide-y divide-gray-200">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Name
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Main Project
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Other Projects
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Reason
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Start Date
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        End Date
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Leave Days
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Leave Type
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Actions
-                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Role</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Main Project</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Other Projects</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">From Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">To Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Leave Type</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Days</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Reason</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">PJ Lead</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-600 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200 font-semibold">
-                    {pendingLeaves.map((l) => (
-                      <tr
-                        key={l.id}
-                        className="hover:bg-gray-50 transition duration-150"
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {l.employee_name || "N/A"}
+
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {allLeaves.map((leave) => (
+                      <tr key={leave.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {leave.employee_name}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {l.main_project || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {formatRole(leave.role)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {l.other_project || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {leave.main_project || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {l.reason || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {leave.other_projects || 'None'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {extractDate(l.start_date) || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {formatYMD(leave.start_date)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {extractDate(l.end_date) || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {formatYMD(leave.end_date)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {daysInclusive(l.start_date, l.end_date)}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {leave.leave_type}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                          {l.leave_type || "N/A"}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {(() => {
+                            const lt = (leave.leave_type || '').toUpperCase();
+                            const dayCount = daysInclusive(leave.start_date, leave.end_date);
+                            const isHalf = lt === 'HUL' || lt === 'HUPL' || lt === 'HML';
+                            const val = isHalf ? 0.5 * dayCount : dayCount;
+                            return Number.isInteger(val) ? String(val) : val.toFixed(1);
+                          })()}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {getLeaveStatusBadge(l)}
+                        <td className="px-4 py-4 text-sm text-gray-500 max-w-xs truncate">
+                          {leave.reason || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-700">
+                          {leave.pj_lead_status === 'Approved' ? (
+                            <div>
+                              <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-blue-100 text-blue-800 border-blue-300">Approved by PJ Lead</span>
+                              {/* <div className="text-xs text-gray-500 mt-1">{leave.approved_by_pj_lead_name || (leave.approved_by_pj_lead ? `#${leave.approved_by_pj_lead}` : '')}</div> */}
+                            </div>
+                          ) : leave.pj_lead_status === 'Rejected' ? (
+                            <div>
+                              <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-red-100 text-red-800 border-red-300">Rejected by PJ</span>
+                              {/* <div className="text-xs text-gray-500 mt-1">{leave.approved_by_pj_lead_name || (leave.approved_by_pj_lead ? `#${leave.approved_by_pj_lead}` : '')}</div> */}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">—</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          {getLeaveStatusBadge(leave)}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <button
-                            onClick={() => handleViewDetails(l.id)}
-                            className="text-indigo-600 hover:text-indigo-900 flex items-center gap-1"
+                            onClick={() => handleViewDetails(leave.id)}
+                            className="text-indigo-600 hover:text-indigo-900"
+                            title="View Details"
                           >
-                            View <ArrowRight className="w-4 h-4" />
+                            Details
                           </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              ) : (
-                <div className="text-center py-8 text-gray-600 font-medium bg-white rounded-lg shadow-md">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.5}
-                    stroke="currentColor"
-                    className="w-8 h-8 mx-auto mb-2 text-gray-400"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.25 10.375h3.375M13.5 19.5V12m0 0a3 3 0 0 0-3-3H6.75a3 3 0 0 0-3 3v2.25l2.625 2.625m3.15-4.125l-2.625 2.625M19.5 19.5h-15m5.25 0v-2.25m1.5-2.25V12m0-3.75h1.5A1.125 1.125 0 0 1 15 8.375v1.5m-3 7.5h-1.5A1.125 1.125 0 0 1 9.75 16.125v-1.5m-3-7.5h1.5A1.125 1.125 0 0 1 8.25 7.125v1.5m4.5 10.125v-2.25M6.75 19.5h10.5"
-                    />
-                  </svg>
-                  No pending leave requests found.
-                </div>
               )}
             </div>
           </div>
@@ -420,14 +525,14 @@ const AdminDashboard = () => {
             <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-white">
               <h2 className="text-2xl font-bold text-gray-800 flex items-center">
                 <List className="w-6 h-6 mr-3 text-purple-600" />
-                Compliance Reports
+                Morning Reports
               </h2>
               <span className="text-xl font-extrabold text-purple-600 bg-purple-100 px-4 py-1 rounded-full">
                 {reportsToDisplay.length}
               </span>
             </div>
 
-            <div className="p-0 overflow-x-auto max-h-96">
+            <div className="w-full overflow-x-auto">
               {reportsToDisplay.length > 0 ? (
                 <>
                   {todaysReports.length === 0 && (
@@ -435,7 +540,7 @@ const AdminDashboard = () => {
                       No reports for today. Showing latest 10.
                     </div>
                   )}
-                  <table className="min-w-full divide-y divide-gray-200">
+                  <table className="min-w-[900px] divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
@@ -459,6 +564,9 @@ const AdminDashboard = () => {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/4">
                           Compliance Status
                         </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          Actions
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
@@ -468,16 +576,16 @@ const AdminDashboard = () => {
                           className="hover:bg-gray-50 transition duration-150"
                         >
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {formatYMD(r.report_date) || "N/A"}
+                            {formatYMD(r.report_date) || "-"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {r.employee_name || "N/A"}
+                            {r.employee_name || "-"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {r.main_project || "N/A"}
+                            {r.main_project || "-"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {r.other_project || "N/A"}
+                            {r.other_projects || "-"}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">
                             {summarizeReport(r.report_text)}
@@ -493,8 +601,20 @@ const AdminDashboard = () => {
                                 r.compliance_status
                               )}`}
                             >
-                              {r.compliance_status || "N/A"}
+                              {r.compliance_status || "-"}
                             </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-left text-sm font-medium">
+                            <button
+                              onClick={() => {
+                                setSelectedReport(r);
+                                setIsReportModalOpen(true);
+                              }}
+                              className="text-indigo-600 hover:text-indigo-900"
+                              title="View Report"
+                            >
+                              View
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -524,8 +644,19 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
+            {isReportModalOpen && (
+              <ReportDetailModal
+                isOpen={isReportModalOpen}
+                onClose={() => {
+                  setIsReportModalOpen(false);
+                  setSelectedReport(null);
+                }}
+                report={selectedReport}
+              />
+            )}
     </div>
   );
 };
 
 export default AdminDashboard;
+

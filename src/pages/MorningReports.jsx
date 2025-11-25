@@ -1,7 +1,46 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import ReportDetailModal from '../components/ReportDetailModal';
 
 const API_URL = 'http://localhost:5000/api';
+
+// Simple CSV download helper (no external dependency)
+const downloadCSV = (rows, filename = 'export.csv') => {
+    if (!rows || !rows.length) return;
+    const keys = Object.keys(rows[0]);
+    const csv = [
+        keys.join(','),
+        ...rows.map(r => keys.map(k => {
+            const v = r[k] ?? '';
+            const s = String(v).replace(/"/g, '""');
+            return `"${s}"`;
+        }).join(','))
+    ].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+};
+
+// Filename helpers
+const sanitizeFilename = (name) => {
+    if (!name) return '';
+    return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, '_').slice(0, 200);
+};
+
+const monthLabelFromDate = (dateStr) => {
+    try {
+        const d = dateStr ? new Date(dateStr) : new Date();
+        if (isNaN(d.getTime())) return new Date().toLocaleString('default', { month: 'short' });
+        return d.toLocaleString('default', { month: 'short' });
+    } catch { return new Date().toLocaleString('default', { month: 'short' }); }
+};
 
 const MorningReports = () => {
     const [reports, setReports] = useState([]);
@@ -13,6 +52,9 @@ const MorningReports = () => {
 
     // All reports (for client-side filtering if API doesn't support it)
     const [allReports, setAllReports] = useState([]);
+    const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+    const [selectedReport, setSelectedReport] = useState(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
         fetchAllReports();
@@ -56,6 +98,10 @@ const MorningReports = () => {
                     ...r,
                     employee_name: r.employee_name || emp.name || 'N/A',
                     employee_email: r.employee_email || emp.email,
+                    main_project: emp.main_project_name || 'N/A', // Add main project
+                    other_project: emp.project_assignments && emp.project_assignments.length > 0
+                        ? emp.project_assignments.map(p => p.project_name).join(', ')
+                        : 'N/A', // Add other projects
                     teams: Array.isArray(r.teams) && r.teams.length ? r.teams : emp.teams || [],
                 };
             };
@@ -71,7 +117,7 @@ const MorningReports = () => {
         }
     };
 
-    const handleSearch = () => {
+    const handleSearch = (statusOverride) => {
         let filtered = [...allReports];
 
         const getComparableDate = (r) => {
@@ -96,8 +142,11 @@ const MorningReports = () => {
             });
         }
 
-        if (filterStatus) {
-            filtered = filtered.filter(r => r.compliance_status === filterStatus);
+        const statusToUse = typeof statusOverride !== 'undefined' ? statusOverride : filterStatus;
+        if (typeof statusOverride !== 'undefined') setFilterStatus(statusOverride);
+
+        if (statusToUse) {
+            filtered = filtered.filter(r => r.compliance_status === statusToUse);
         }
         setReports(filtered);
     };
@@ -158,8 +207,34 @@ const MorningReports = () => {
         <div className="p-4 md:p-8 min-h-screen bg-gray-50">
             {/* Header */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-3">
-                <h2 className="text-3xl font-extrabold text-gray-900">Morning Reports</h2>
-            </div>
+                        <h2 className="text-3xl font-extrabold text-gray-900">Morning Reports</h2>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => {
+                                    // export currently shown `reports` as CSV
+                                    const rows = reports.map(r => ({
+                                        Date: formatYMD(r.submission_time || r.report_date || r.created_at),
+                                        Name: r.employee_name || 'N/A',
+                                        Email: r.employee_email || r.email || '',
+                                        'Main Project': r.main_project || '',
+                                        'Other Projects': r.other_project || '',
+                                        'Report Summary': summarizeReport(r.report_text),
+                                        Time: formatTime(r.submission_time || r.created_at || r.report_date),
+                                        Status: r.compliance_status || '',
+                                    }));
+                                    const refDate = filterFromDate || filterToDate || new Date().toISOString();
+                                    const monthLabel = monthLabelFromDate(refDate);
+                                    const filename = `Report_${sanitizeFilename(monthLabel)}.csv`;
+                                    downloadCSV(rows, filename);
+                                }}
+                                className="bg-green-600 text-white rounded-lg p-2 hover:bg-green-700 transition"
+                            >
+                                Export CSV
+                            </button>
+                        </div>
+                    </div>
+
+            {/* (Status count cards moved to AdminEmployeeReports) */}
 
             {/* Filters */}
             <div className="bg-white p-4 rounded-lg shadow mb-6">
@@ -206,7 +281,7 @@ const MorningReports = () => {
                         </button>
                         <button
                             onClick={handleReset}
-                            className="flex-1 bg-gray-300 text-gray-800 rounded-lg p-2 hover:bg-gray-400 transition"
+                            className="flex-1 bg-red-600 text-white rounded-lg p-2 hover:bg-red-700 transition"
                         >
                             Reset
                         </button>
@@ -232,31 +307,59 @@ const MorningReports = () => {
 
             {/* Desktop Table */}
             {!loading && !error && reports.length > 0 && (
-                <div className="hidden md:block overflow-x-auto">
-                    <table className="min-w-full bg-white rounded-lg shadow overflow-hidden">
-                        <thead className="bg-gray-100 text-gray-600 uppercase text-sm">
-                            <tr>
-                                <th className="p-4 text-left">Date</th>
-                                <th className="p-4 text-left">Name</th>
-                                <th className="p-4 text-left">Project</th>
-                                <th className="p-4 text-left">Report</th>
-                                <th className="p-4 text-left">Time</th>
-                                <th className="p-4 text-left">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="text-gray-700 font-semibold">
-                            {reports.map(report => (
-                                <tr key={report.id} className="border-b hover:bg-gray-50 transition">
-                                    <td className="p-4">{formatYMD(report.submission_time || report.report_date || report.created_at)}</td>
-                                    <td className="p-4">{report.employee_name}</td>
-                                    <td className="p-4">{Array.isArray(report.teams) ? (report.teams.length ? report.teams.join(', ') : 'N/A') : (typeof report.team === 'string' ? report.team : 'N/A')}</td>
-                                    <td className="p-4 max-w-sm whitespace-normal">{summarizeReport(report.report_text)}</td>
-                                    <td className="p-4">{formatTime(report.submission_time || report.created_at || report.report_date)}</td>
-                                    <td className="p-4">{getStatusBadge(report.compliance_status)}</td>
+                <div className="hidden md:block">
+                    {/* Make the table scroll internally (both axes) while keeping the header sticky */}
+                    <div className="max-h-[480px] overflow-auto rounded-lg bg-white shadow">
+                        <table className="min-w-max bg-white">
+                            <thead className="bg-gray-100 text-gray-600 uppercase text-sm sticky top-0">
+                                <tr>
+                                    <th className="p-4 text-left w-36 sticky left-0 top-0 z-30 bg-gray-100">Date</th>
+                                    <th className="p-4 text-left w-40 sticky left-36 top-0 z-30 bg-gray-100">Name</th>
+                                    <th className="p-4 text-left">Main Project</th>
+                                    <th className="p-4 text-left">Other Projects</th>
+                                    <th className="p-4 text-left">Report Summary</th>
+                                    <th className="p-4 text-left">Time</th>
+                                    <th className="p-4 text-left">Status</th>
+                                    <th className="p-4 text-left w-36 sticky right-0 top-0 z-30 bg-gray-100">Actions</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody className="text-gray-700 font-semibold">
+                                {reports.map(report => (
+                                    <tr key={report.id} className="border-b hover:bg-gray-50 transition">
+                                        <td className="p-4 align-top whitespace-nowrap sticky left-0 bg-white z-20">{formatYMD(report.submission_time || report.report_date || report.created_at)}</td>
+                                            {
+                                                (() => {
+                                                    const empId = report.employee_id || report.employeeId || report.user_id || report.userId || report.employee_id_legacy || null;
+                                                    if (empId) {
+                                                        return (
+                                                            <td className="p-4 align-top whitespace-nowrap sticky left-36 bg-white z-20">
+                                                                <button onClick={() => navigate(`/admin/reports/employee/${empId}`)} className="text-indigo-600 hover:text-indigo-900">{report.employee_name}</button>
+                                                            </td>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <td className="p-4 align-top whitespace-nowrap sticky left-36 bg-white z-20">{report.employee_name}</td>
+                                                    );
+                                                })()
+                                            }
+                                            <td className="p-4 align-top whitespace-nowrap">{report.main_project}</td>
+                                            <td className="p-4 align-top whitespace-nowrap">{report.other_project}</td>
+                                            <td className="p-4 max-w-[48ch] truncate">{summarizeReport(report.report_text)}</td>
+                                            <td className="p-4 align-top whitespace-nowrap">{formatTime(report.submission_time || report.created_at || report.report_date)}</td>
+                                            <td className="p-4 align-top whitespace-nowrap">{getStatusBadge(report.compliance_status)}</td>
+                                            <td className="p-4 align-top whitespace-nowrap sticky right-0 bg-white z-20">
+                                                <button
+                                                    onClick={() => { setSelectedReport(report); setIsReportModalOpen(true); }}
+                                                    className="text-indigo-600 hover:text-indigo-900"
+                                                >
+                                                    View
+                                                </button>
+                                            </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
 
@@ -270,7 +373,9 @@ const MorningReports = () => {
                                 {formatYMD(report.submission_time || report.report_date || report.created_at)}
                             </div>
                             {/* Name */}
-                            <p className="text-sm font-semibold text-gray-800 mb-1">{report.employee_name}</p>
+                            <p className="text-sm font-semibold text-gray-800 mb-1">{(report.employee_id || report.employeeId || report.user_id || report.userId) ? (
+                                <button onClick={() => navigate(`/admin/reports/employee/${report.employee_id || report.employeeId || report.user_id || report.userId}`)} className="text-indigo-600">{report.employee_name}</button>
+                            ) : report.employee_name}</p>
                             {/* Teams */}
                             <p className="text-xs text-gray-600 mb-2">{Array.isArray(report.teams) ? (report.teams.length ? report.teams.join(', ') : 'N/A') : (typeof report.team === 'string' ? report.team : 'N/A')}</p>
                             {/* Report */}
@@ -279,14 +384,30 @@ const MorningReports = () => {
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-gray-500">{formatTime(report.submission_time || report.created_at || report.report_date)}</span>
                                 <span className={`px-2 py-1 rounded-full text-xs font-semibold ${report.compliance_status === 'OnTime' ? 'bg-green-100 text-green-700' :
-                                        report.compliance_status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
-                                            report.compliance_status === 'HUL' ? 'bg-orange-100 text-orange-700' :
-                                                'bg-red-100 text-red-700'
+                                    report.compliance_status === 'Late' ? 'bg-yellow-100 text-yellow-700' :
+                                        report.compliance_status === 'HUL' ? 'bg-orange-100 text-orange-700' :
+                                            'bg-red-100 text-red-700'
                                     }`}>{report.compliance_status}</span>
+                            </div>
+                            <div className="mt-3 text-right">
+                                <button
+                                    onClick={() => { setSelectedReport(report); setIsReportModalOpen(true); }}
+                                    className="text-indigo-600 hover:text-indigo-900 text-sm font-medium"
+                                >
+                                    View Details
+                                </button>
                             </div>
                         </div>
                     ))}
                 </div>
+            )}
+
+            {isReportModalOpen && (
+                <ReportDetailModal
+                    isOpen={isReportModalOpen}
+                    onClose={() => { setIsReportModalOpen(false); setSelectedReport(null); }}
+                    report={selectedReport}
+                />
             )}
         </div>
     );

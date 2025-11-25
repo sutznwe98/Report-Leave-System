@@ -89,7 +89,7 @@ const EmployeeReportDetail = ({ reportId: propReportId }) => {
 
   const dateStr = report?.report_date
     ? new Date(report.report_date).toISOString().split('T')[0]
-    : 'N/A';
+    : '-';
 
   return (
     <div className="p-6 min-h-screen bg-gray-50">
